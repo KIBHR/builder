@@ -11,6 +11,7 @@ signal response_failed(reason: String)
 signal sign_in_failed(reason: String)
 
 var node_binary := "node"
+var last_error := ""
 var session: Dictionary = {"status": "disconnected", "sharing": false}
 var models: Array = []
 var _port := 0
@@ -40,14 +41,15 @@ func start(executable: String = "node") -> void:
 	if _pid > 0 or _connected:
 		return
 	node_binary = executable
+	last_error = ""
 	var entry := ProjectSettings.globalize_path("res://bridge/server.mjs")
 	var dependency := ProjectSettings.globalize_path("res://third_party/siwc-devkit/packages/local/dist/index.js")
 	if not FileAccess.file_exists(entry) or not FileAccess.file_exists(dependency):
-		bridge_failed.emit("Не установлен официальный DevKit. Выполните: node bridge/setup.mjs")
+		_bridge_error("Не установлен официальный DevKit. Выполните: node bridge/setup.mjs")
 		return
 	var state_dir := ProjectSettings.globalize_path("user://siwc")
 	if DirAccess.make_dir_recursive_absolute(state_dir) != OK:
-		bridge_failed.emit("Невозможно создать локальный каталог авторизации.")
+		_bridge_error("Невозможно создать локальный каталог авторизации.")
 		return
 	_handshake_file = state_dir.path_join("bridge-handshake.json")
 	if FileAccess.file_exists(_handshake_file):
@@ -56,9 +58,14 @@ func start(executable: String = "node") -> void:
 	_pid = OS.create_process(node_binary, [entry, state_dir, _handshake_file])
 	if _pid <= 0:
 		_pid = -1
-		bridge_failed.emit("Не удалось запустить Node.js. Проверьте путь к node в настройках.")
+		_bridge_error("Не удалось запустить Node.js. Проверьте путь к node в настройках.")
 		return
 	_poll_timer.start()
+
+
+func _bridge_error(message: String) -> void:
+	last_error = message
+	bridge_failed.emit(message)
 
 
 func is_available() -> bool:
@@ -132,7 +139,7 @@ func _ping_bridge() -> void:
 func _poll_bridge() -> void:
 	if Time.get_ticks_msec() - _launch_time > 12_000:
 		_poll_timer.stop()
-		bridge_failed.emit("Локальный ChatGPT-компонент не ответил. Запустите node bridge/server.mjs в терминале для диагностики.")
+		_bridge_error("Локальный ChatGPT-компонент не ответил. Запустите node bridge/server.mjs в терминале для диагностики.")
 		return
 	if not FileAccess.file_exists(_handshake_file):
 		return
@@ -147,7 +154,7 @@ func _poll_bridge() -> void:
 	_port = int(parsed.get("port", 0))
 	_secret = str(parsed.get("secret", ""))
 	if _port <= 0 or _port > 65535 or _secret.length() != 64:
-		bridge_failed.emit("Получены некорректные параметры локального компонента.")
+		_bridge_error("Получены некорректные параметры локального компонента.")
 		return
 	_poll_timer.stop()
 	DirAccess.remove_absolute(_handshake_file)
@@ -193,7 +200,7 @@ func _process_result(action: String, result: int, status: int, bytes: PackedByte
 			_chat_busy = false
 			response_failed.emit(reason)
 		else:
-			bridge_failed.emit(reason)
+			_bridge_error(reason)
 		return
 	match action:
 		"session", "signin", "disconnect":
