@@ -123,6 +123,7 @@ func _build_shell() -> void:
 	chat_panel.visible = false
 	main.add_child(chat_panel)
 	chat_panel.model_changed.connect(_on_ai_model_changed)
+	chat_panel.provider_changed.connect(_on_ai_provider_changed)
 	status_label = Label.new()
 	status_label.text = "Готово. Для приватных репозиториев выполните gh auth login в терминале."
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -485,7 +486,7 @@ func _clone_project(project: Dictionary) -> void:
 	if mkerr != OK:
 		_message("Не удалось создать родительскую директорию: " + str(mkerr), true)
 		return
-	var result: Dictionary = CLI.run(_git(), ["clone", "https://github.com/" + str(project["full_name"]) + ".git", target])
+	var result: Dictionary = CLI.run(_gh(), ["repo", "clone", str(project["full_name"]), target])
 	_message("Репозиторий клонирован: " + target if result["ok"] else "Клонирование не удалось: " + str(result["output"]), not result["ok"])
 
 
@@ -789,6 +790,11 @@ func _show_chat() -> void:
 	content_scroll.hide()
 	chat_panel.show()
 	chat_panel.configure(config)
+
+
+func _on_ai_provider_changed(provider: String) -> void:
+	config["ai_provider"] = provider
+	_save()
 
 
 func _on_ai_model_changed(model: String) -> void:
