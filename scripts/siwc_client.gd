@@ -73,7 +73,7 @@ func can_chat() -> bool:
 	return _connected and bool(session.get("sharing", false)) and not models.is_empty()
 
 
-func sign_in() -> void:
+func sign_in(reconsent: bool = false) -> void:
 	if not _connected:
 		sign_in_failed.emit("Локальный компонент ChatGPT не запущен. Сначала выполните установку.")
 		return
@@ -81,7 +81,7 @@ func sign_in() -> void:
 		sign_in_failed.emit("Подождите завершения предыдущего действия.")
 		return
 	_login_busy = true
-	_send("/signin", HTTPClient.METHOD_POST, {}, "signin", 650.0)
+	_send("/signin", HTTPClient.METHOD_POST, {"reconsent": reconsent}, "signin", 650.0)
 
 
 func disconnect() -> void:
