@@ -240,7 +240,7 @@ func _set_account_ui() -> void:
 	elif state == "connected":
 		account_status.text = "ChatGPT подключён, но доступ к лимиту подписки не разрешён. Войдите повторно и подтвердите разрешения."
 	elif not siwc.is_available():
-		account_status.text = "Вход через ChatGPT: ожидается запуск локального модуля."
+		account_status.text = siwc.last_error if not siwc.last_error.is_empty() else "Вход через ChatGPT: ожидается запуск локального модуля."
 	else:
 		account_status.text = "Не подключён. Нажмите «Продолжить с ChatGPT»."
 
