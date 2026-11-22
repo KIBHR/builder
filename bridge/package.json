@@ -1,0 +1,13 @@
+{
+  "name": "builder-chatgpt-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-only bridge from Godot to OpenAI Sign in with ChatGPT DevKit",
+  "engines": { "node": ">=22.12.0" },
+  "dependencies": { "@napi-rs/keyring": "~2.1.2" },
+  "scripts": {
+    "check": "node --check server.mjs",
+    "start": "node server.mjs"
+  }
+}
