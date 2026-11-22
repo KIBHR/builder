@@ -206,19 +206,214 @@ func _save() -> bool:
 	return true
 
 
-func _show_projects() -> void:
-	_clear_page("Репозитории")
-	_add_note(body, "Локальная рабочая копия — источник для безопасной синхронизации зеркал. Публикация в зеркала производится только по подтверждению.")
+func _show_home() -> void:
+	_clear_page("Рабочее пространство")
+	var welcome := _panel()
+	var title := _add_note(welcome, "Проекты, GitHub и искусственный интеллект — в одном месте.", UI.TEXT)
+	UI.label(title, 23)
+	_add_note(welcome, "Подключите GitHub, выберите репозиторий и начните работу с ChatGPT или локальной моделью. Без ручного копирования ссылок и токенов.", UI.MUTED)
+	var actions := HFlowContainer.new()
+	actions.add_theme_constant_override("h_separation", 10)
+	welcome.add_child(actions)
+	UI.accent(_add_button(actions, "Подключить GitHub", _show_accounts))
+	_add_button(actions, "Загрузить репозиторий", _show_catalog)
+	_add_button(actions, "Открыть ИИ-помощника", _show_chat)
+	var steps := _panel()
+	var step_title := _add_note(steps, "БЫСТРЫЙ СТАРТ", UI.ACCENT_HOVER)
+	UI.label(step_title, 13)
+	_add_note(steps, "01   GitHub — авторизация в браузере, без токена в Builder.")
+	_add_note(steps, "02   Репозитории — выберите проект из списка и каталог для загрузки.")
+	_add_note(steps, "03   ИИ — вход в ChatGPT или Ollama / LM Studio на вашем компьютере.")
+	var overview := _panel()
+	_add_note(overview, "ВАШИ ПРОЕКТЫ", UI.ACCENT_HOVER)
+	var projects: Array = config.get("projects", [])
+	var projects_label := _add_note(overview, str(projects.size()) + " подключено", UI.TEXT)
+	UI.label(projects_label, 22)
+	if not projects.is_empty():
+		for index in range(mini(projects.size(), 4)):
+			var item: Variant = projects[index]
+			if item is Dictionary:
+				_add_button(overview, "▦  " + str(item.get("full_name", "Репозиторий")), _show_projects)
+	_add_button(overview, "Все проекты", _show_projects)
+
+
+func _default_clone_root() -> String:
+	var saved := str(config.get("clone_root", "")).strip_edges()
+	if saved.is_absolute_path():
+		return saved
+	var documents := OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS)
+	if documents.is_empty():
+		documents = OS.get_user_data_dir()
+	return documents.path_join("Builder").path_join("repos")
+
+
+func _choose_clone_folder() -> void:
+	var picker := FileDialog.new()
+	picker.title = "Куда загружать репозитории"
+	picker.access = FileDialog.ACCESS_FILESYSTEM
+	picker.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	picker.current_dir = _default_clone_root().get_base_dir()
+	picker.dir_selected.connect(func(path: String):
+		config["clone_root"] = path
+		_save()
+		_show_catalog()
+		picker.queue_free()
+	)
+	picker.canceled.connect(func(): picker.queue_free())
+	add_child(picker)
+	picker.popup_centered_ratio(0.8)
+
+
+func _show_catalog() -> void:
+	_clear_page("Загрузка из GitHub")
+	var guide := _panel()
+	var label := _add_note(guide, "Ваши репозитории — без ручного ввода адресов", UI.TEXT)
+	UI.label(label, 21)
+	_add_note(guide, "Builder использует официальный GitHub CLI. В списке отображаются репозитории, к которым имеет доступ текущий аккаунт.")
+	var actions := HFlowContainer.new()
+	actions.add_theme_constant_override("h_separation", 10)
+	guide.add_child(actions)
+	UI.accent(_add_button(actions, "Обновить список", _load_github_catalog))
+	_add_button(actions, "Подключить GitHub", _show_accounts)
+	var folder := _panel()
+	_add_note(folder, "КАТАЛОГ ДЛЯ КЛОНИРОВАНИЯ", UI.ACCENT_HOVER)
+	clone_root_hint = _add_note(folder, _default_clone_root(), UI.TEXT)
+	var folder_button := _add_button(folder, "Изменить папку…", _choose_clone_folder)
+	UI.subtle(folder_button)
+	var search_panel := _panel()
+	repo_catalog_search = _field(search_panel, "ПОИСК ПО НАЗВАНИЮ", "Например, KIBHR или builder")
+	repo_catalog_search.text_changed.connect(func(_value: String): _render_github_catalog())
+	repo_catalog_list = VBoxContainer.new()
+	repo_catalog_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(repo_catalog_list)
+	_load_github_catalog()
+
+
+func _load_github_catalog() -> void:
+	if repo_catalog_list == null or not is_instance_valid(repo_catalog_list):
+		return
+	for child in repo_catalog_list.get_children():
+		child.queue_free()
+	repo_catalog.clear()
+	_add_note(repo_catalog_list, "Загружаю список доступных репозиториев…", UI.MUTED)
+	var command := ["api", "user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member"]
+	var result: Dictionary = CLI.run(_gh(), command)
+	if not result["ok"]:
+		for child in repo_catalog_list.get_children():
+			child.queue_free()
+		_add_note(repo_catalog_list, "Не удалось получить репозитории. Сначала подключите GitHub и нажмите «Обновить список».", UI.DANGER)
+		_message("GitHub недоступен: " + str(result["output"]).substr(0, 260), true)
+		return
+	var data: Variant = JSON.parse_string(str(result["output"]))
+	if not (data is Array):
+		_message("GitHub вернул неожиданный список репозиториев.", true)
+		return
+	for item in data:
+		if item is Dictionary and CLI.valid_repository(str(item.get("full_name", ""))):
+			repo_catalog.append(item)
+	_render_github_catalog()
+
+
+func _render_github_catalog() -> void:
+	if repo_catalog_list == null or not is_instance_valid(repo_catalog_list):
+		return
+	for child in repo_catalog_list.get_children():
+		repo_catalog_list.remove_child(child)
+		child.queue_free()
+	var filter_text := repo_catalog_search.text.strip_edges().to_lower() if repo_catalog_search != null else ""
+	var shown := 0
+	for project in repo_catalog:
+		var fullname := str(project.get("full_name", ""))
+		var description := str(project.get("description", ""))
+		if not filter_text.is_empty() and not fullname.to_lower().contains(filter_text) and not description.to_lower().contains(filter_text):
+			continue
+		var entry := PanelContainer.new()
+		entry.add_theme_stylebox_override("panel", UI.panel(UI.SURFACE, 14))
+		repo_catalog_list.add_child(entry)
+		var row := HBoxContainer.new()
+		entry.add_child(row)
+		var details := VBoxContainer.new()
+		details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(details)
+		var title := _add_note(details, "▦  " + fullname, UI.TEXT)
+		UI.label(title, 17)
+		_add_note(details, ("Приватный" if bool(project.get("private", false)) else "Публичный") + "  •  " + (description.substr(0, 110) if not description.is_empty() else "Без описания"), UI.MUTED)
+		var name := fullname
+		var branch := str(project.get("default_branch", "main"))
+		var action := _add_button(row, "Добавить проект", func(): _import_github_project(name, branch))
+		UI.accent(action)
+		shown += 1
+		if shown >= 80:
+			break
+	if shown == 0:
+		_add_note(repo_catalog_list, "Совпадений нет. Проверьте поисковый запрос или подключите GitHub.", UI.MUTED)
+	else:
+		_add_note(repo_catalog_list, "Найдено " + str(shown) + " репозиториев. Загрузка запускается только по вашему нажатию.", UI.MUTED)
+
+
+func _import_github_project(full_name: String, branch: String) -> void:
+	if not CLI.valid_repository(full_name):
+		_message("Некорректное имя репозитория.", true)
+		return
+	for existing in config.get("projects", []):
+		if existing is Dictionary and str(existing.get("full_name", "")) == full_name:
+			_message("Этот репозиторий уже подключён.")
+			_show_projects()
+			return
+	var root_dir := _default_clone_root()
+	if not root_dir.is_absolute_path():
+		_message("Выберите абсолютный путь для проектов.", true)
+		return
+	var directory := full_name.replace("/", "__")
+	var target := root_dir.path_join(directory)
+	if DirAccess.dir_exists_absolute(target):
+		var current := CLI.run(_git(), ["-C", target, "remote", "get-url", "origin"])
+		if not current["ok"] or not _matches_origin(str(current["output"]), full_name):
+			_message("Папка уже существует и не совпадает с этим GitHub-репозиторием: " + target, true)
+			return
+	else:
+		var created := DirAccess.make_dir_recursive_absolute(root_dir)
+		if created != OK:
+			_message("Не удалось создать папку для репозиториев.", true)
+			return
+		_message("Клонируется " + full_name + "…")
+		var cloned := CLI.run(_gh(), ["repo", "clone", full_name, target])
+		if not cloned["ok"]:
+			_message("Ошибка клонирования: " + str(cloned["output"]).substr(0, 280), true)
+			return
+	config["projects"].append({"full_name": full_name, "path": target, "branch": branch, "mirrors": []})
+	if _save():
+		_show_projects()
+		_message("Репозиторий готов: " + full_name + ". Папка: " + target)
+
+
+func _show_manual_project() -> void:
+	_clear_page("Добавить репозиторий вручную")
+	_add_note(body, "Используйте этот вариант для уже клонированных проектов или зеркал. Для обычной загрузки проще выбрать проект в каталоге GitHub.")
 	var form := _panel()
-	_add_note(form, "Добавить проект", Color("#71c4ff"))
-	var full_name := _field(form, "Основной репозиторий", "owner/repository")
-	var path := _field(form, "Абсолютный путь к локальной копии", "/Users/you/Projects/project")
-	var branch := _field(form, "Ветка синхронизации", "main", "main")
-	var mirrors := _field(form, "Зеркала GitHub (через запятую)", "organization-a/project, organization-b/project")
-	_add_button(form, "Добавить проект", func(): _add_project(full_name.text, path.text, branch.text, mirrors.text))
+	var full_name := _field(form, "GitHub-репозиторий", "owner/repository")
+	var path := _field(form, "Путь к локальному проекту", "/Users/you/Projects/repository")
+	var branch := _field(form, "Ветка", "main", "main")
+	var mirrors := _field(form, "Зеркала (необязательно)", "owner/other-repo")
+	UI.accent(_add_button(form, "Добавить", func(): _add_project(full_name.text, path.text, branch.text, mirrors.text)))
+
+
+func _show_projects() -> void:
+	_clear_page("Мои проекты")
+	var lead := _panel()
+	var caption := _add_note(lead, "Ваши репозитории в одном месте", UI.TEXT)
+	UI.label(caption, 21)
+	_add_note(lead, "Выберите проект для работы. Для новых репозиториев есть импорт прямо из GitHub.")
+	var actions := HFlowContainer.new()
+	actions.add_theme_constant_override("h_separation", 10)
+	lead.add_child(actions)
+	UI.accent(_add_button(actions, "＋  Загрузить из GitHub", _show_catalog))
+	_add_button(actions, "Добавить вручную", _show_manual_project)
 	var projects: Array = config.get("projects", [])
 	if projects.is_empty():
-		_add_note(body, "Проектов пока нет. Добавьте первый репозиторий выше.")
+		var hint := _panel()
+		_add_note(hint, "Пока нет репозиториев. Подключите GitHub и выберите первый проект.")
+		UI.accent(_add_button(hint, "Выбрать из GitHub", _show_catalog))
 	for project in projects:
 		if project is Dictionary:
 			_project_card(project)
