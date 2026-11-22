@@ -7,7 +7,11 @@ const CLI = preload("res://scripts/cli.gd")
 
 static func parse_accounts(raw: String) -> Dictionary:
 	var result := {"accounts": [], "active": "", "error": ""}
-	var data: Variant = JSON.parse_string(raw)
+	var decoder := JSON.new()
+	if decoder.parse(raw) != OK:
+		result["error"] = "GitHub CLI вернул некорректный JSON. Обновите gh."
+		return result
+	var data: Variant = decoder.data
 	if not (data is Dictionary):
 		result["error"] = "GitHub CLI вернул некорректный JSON. Обновите gh."
 		return result
