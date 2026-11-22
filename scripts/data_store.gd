@@ -10,7 +10,8 @@ static func defaults() -> Dictionary:
 		"projects": [],
 		"git_binary": "git",
 		"gh_binary": "gh",
-		"ai_model": "gpt-6.2-sol"
+		"ai_model": "gpt-6.2-sol",
+		"node_binary": "node"
 	}
 
 
