@@ -168,6 +168,8 @@ async function handle(request, response) {
     return respond(response, 200, { session: await chatgpt.getSession() });
   }
   if (request.method === "GET" && pathname === "/auth/status") {
+    // Do not contend with the SDK's credential store while browser consent is pending.
+    if (loginBusy) return respond(response, 200, { auth: publicAuthState() });
     return respond(response, 200, { auth: publicAuthState(), session: await chatgpt.getSession() });
   }
   if (request.method === "GET" && pathname === "/models") {
