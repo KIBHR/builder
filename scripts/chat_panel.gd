@@ -1,9 +1,12 @@
 extends VBoxContainer
 ## Native Builder chat UI. The selected file is uploaded only after an explicit Send.
 signal model_changed(model: String)
+signal provider_changed(provider: String)
 
 const OpenAIClient = preload("res://scripts/openai_client.gd")
 const SIWCClient = preload("res://scripts/siwc_client.gd")
+const LocalClient = preload("res://scripts/local_model_client.gd")
+const UI = preload("res://scripts/ui_style.gd")
 const MAX_FILE_SIZE := 48 * 1024
 const ALLOWED_EXTENSIONS := ["gd", "md", "txt", "json", "yml", "yaml", "py", "php", "js", "ts", "tsx", "jsx", "html", "css", "sql", "toml", "xml", "sh", "go", "rs", "java", "cpp", "h", "cs"]
 const MODELS := ["gpt-6.2-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-5.4-mini"]
@@ -12,7 +15,16 @@ var config: Dictionary = {}
 var history: Array = []
 var client
 var siwc
+var local_client
+var ai_provider := "chatgpt"
 var api_mode := false
+var provider_select: OptionButton
+var provider_hint: Label
+var provider_card: PanelContainer
+var account_row: HBoxContainer
+var local_row: HBoxContainer
+var local_status: Label
+var local_refresh_button: Button
 var api_mode_toggle: CheckBox
 var api_credential_row: HBoxContainer
 var login_button: Button
@@ -49,6 +61,12 @@ func _ready() -> void:
 	siwc.response_received.connect(_on_answer)
 	siwc.response_failed.connect(_on_siwc_error)
 	siwc.sign_in_failed.connect(func(reason: String): account_status.text = "Ошибка входа: " + reason)
+	local_client = LocalClient.new()
+	add_child(local_client)
+	local_client.models_received.connect(_on_local_models)
+	local_client.answered.connect(_on_answer)
+	local_client.failed.connect(_on_error)
+	local_client.connection_changed.connect(func(_connected: bool, detail: String): local_status.text = detail)
 	_build_interface()
 	_update_key_label()
 	_set_account_ui()
@@ -66,9 +84,12 @@ func configure(data: Dictionary) -> void:
 			break
 	_refresh_projects()
 	_update_key_label()
-	if not siwc.is_available():
-		siwc.start(str(data.get("node_binary", "node")))
-	_set_account_ui()
+	var selected_provider := str(data.get("ai_provider", "chatgpt"))
+	var requested_index := ["chatgpt", "ollama", "lm_studio", "openai_api"].find(selected_provider)
+	if requested_index < 0:
+		requested_index = 0
+	provider_select.select(requested_index)
+	_select_provider(requested_index, false)
 
 
 func _make_note(parent: Node, value: String, tint: Color = Color("#acbdd3")) -> Label:
@@ -81,6 +102,37 @@ func _make_note(parent: Node, value: String, tint: Color = Color("#acbdd3")) -> 
 
 
 func _build_interface() -> void:
+	provider_card = PanelContainer.new()
+	provider_card.add_theme_stylebox_override("panel", UI.panel(UI.SIDEBAR, 16))
+	add_child(provider_card)
+	var connect_column := VBoxContainer.new()
+	provider_card.add_child(connect_column)
+	var eyebrow := _make_note(connect_column, "✦  ПОДКЛЮЧЕНИЕ ИИ", UI.ACCENT_HOVER)
+	eyebrow.add_theme_font_size_override("font_size", 13)
+	var mode_label := _make_note(connect_column, "Выберите удобный способ работы", UI.TEXT)
+	mode_label.add_theme_font_size_override("font_size", 19)
+	provider_select = OptionButton.new()
+	provider_select.add_item("ChatGPT — вход через аккаунт")
+	provider_select.add_item("Ollama — локально, без ключа")
+	provider_select.add_item("LM Studio — локально, без ключа")
+	provider_select.add_item("OpenAI API — отдельный ключ")
+	provider_select.item_selected.connect(func(index: int): _select_provider(index))
+	connect_column.add_child(provider_select)
+	provider_hint = _make_note(connect_column, "", UI.MUTED)
+	local_row = HBoxContainer.new()
+	connect_column.add_child(local_row)
+	local_refresh_button = Button.new()
+	local_refresh_button.text = "Найти модели"
+	local_refresh_button.pressed.connect(func(): local_client.refresh_models())
+	UI.accent(local_refresh_button)
+	local_row.add_child(local_refresh_button)
+	var local_help := Button.new()
+	local_help.text = "Установить / открыть ↗"
+	local_help.pressed.connect(_open_local_provider_site)
+	local_row.add_child(local_help)
+	local_status = _make_note(connect_column, "")
+	local_row.hide()
+	local_status.hide()
 	var toolbar := HFlowContainer.new()
 	toolbar.add_theme_constant_override("h_separation", 9)
 	add_child(toolbar)
@@ -100,7 +152,7 @@ func _build_interface() -> void:
 	new_chat.pressed.connect(_new_chat)
 	toolbar.add_child(new_chat)
 
-	var account_row := HBoxContainer.new()
+	account_row = HBoxContainer.new()
 	account_row.add_theme_constant_override("separation", 8)
 	add_child(account_row)
 	login_button = Button.new()
@@ -116,15 +168,12 @@ func _build_interface() -> void:
 	manage.pressed.connect(func(): OS.shell_open("https://chatgpt.com/settings/usage"))
 	account_row.add_child(manage)
 	account_status = _make_note(self, "Подключение ChatGPT не запущено.")
-	api_mode_toggle = CheckBox.new()
-	api_mode_toggle.text = "Вместо подписки использовать OpenAI API-ключ"
-	api_mode_toggle.toggled.connect(_toggle_api_mode)
-	add_child(api_mode_toggle)
 	api_credential_row = HBoxContainer.new()
 	api_credential_row.add_theme_constant_override("separation", 8)
 	api_credential_row.visible = false
 	add_child(api_credential_row)
 	var credential_row := api_credential_row
+	credential_row.add_theme_constant_override("separation", 10)
 	key_input = LineEdit.new()
 	key_input.secret = true
 	key_input.secret_character = "•"
@@ -197,19 +246,58 @@ func _build_interface() -> void:
 	actions.add_child(copy_button)
 
 
-func _toggle_api_mode(value: bool) -> void:
-	if siwc.is_busy() or client.is_busy():
-		api_mode_toggle.set_pressed_no_signal(api_mode)
+func _select_provider(index: int, clear_old_chat: bool = true) -> void:
+	var providers := ["chatgpt", "ollama", "lm_studio", "openai_api"]
+	if index < 0 or index >= providers.size():
 		return
-	api_mode = value
-	api_credential_row.visible = value
-	key_status.visible = value
-	_new_chat()
-	if value:
-		_set_api_models()
-	else:
+	if siwc.is_busy() or client.is_busy() or local_client.busy:
+		provider_select.select(providers.find(ai_provider))
+		return
+	var next: String = providers[index]
+	if clear_old_chat and next != ai_provider:
+		_new_chat()
+	ai_provider = next
+	api_mode = next == "openai_api"
+	api_credential_row.visible = api_mode
+	key_status.visible = api_mode
+	account_row.visible = next == "chatgpt"
+	account_status.visible = next == "chatgpt"
+	local_row.visible = next == "ollama" or next == "lm_studio"
+	local_status.visible = local_row.visible
+	if next == "chatgpt":
+		provider_hint.text = "Официальный вход в ChatGPT. API-ключ не нужен, если подписка допускает использование в Builder."
+		if not siwc.is_available():
+			siwc.start(str(config.get("node_binary", "node")))
 		_on_siwc_models(siwc.models)
+	elif next == "ollama" or next == "lm_studio":
+		provider_hint.text = "Полностью локально. Модели работают на вашем компьютере, без API-ключа. Запустите сервер и нажмите «Найти модели»."
+		local_client.set_provider(next)
+		model_select.clear()
+		local_client.refresh_models()
+	else:
+		provider_hint.text = "Дополнительный режим с отдельной оплатой API. Ключ хранится только до выхода из приложения."
+		_set_api_models()
 	_set_account_ui()
+	if clear_old_chat:
+		provider_changed.emit(next)
+
+
+func _open_local_provider_site() -> void:
+	var url := "https://ollama.com/download" if ai_provider == "ollama" else "https://lmstudio.ai/"
+	OS.shell_open(url)
+
+
+func _on_local_models(available: Array) -> void:
+	if ai_provider != "ollama" and ai_provider != "lm_studio":
+		return
+	model_select.clear()
+	for name in available:
+		model_select.add_item(str(name))
+	if model_select.item_count > 0:
+		model_select.select(0)
+		local_status.text = "✓  Локальная модель готова. Можно отправлять сообщения."
+	else:
+		local_status.text = "Сервер не ответил или список моделей пуст. Установите модель и повторите проверку."
 
 
 func _set_api_models() -> void:
