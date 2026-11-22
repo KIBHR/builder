@@ -313,8 +313,7 @@ func _set_account_ui() -> void:
 	login_button.disabled = api_mode or siwc.is_busy()
 	login_button.text = "Разрешить использование подписки" if str(siwc.session.get("status", "")) == "connected" and not bool(siwc.session.get("sharing", false)) else "Продолжить с ChatGPT"
 	logout_button.disabled = api_mode or siwc.is_busy() or siwc.session.get("status", "") != "connected"
-	if api_mode:
-		account_status.text = "Режим OpenAI API включён. Вход через ChatGPT не требуется."
+	if ai_provider != "chatgpt":
 		return
 	var state := str(siwc.session.get("status", "disconnected"))
 	var display := str(siwc.session.get("profileLabel", ""))
@@ -334,7 +333,7 @@ func _set_account_ui() -> void:
 
 
 func _sign_in() -> void:
-	if api_mode:
+	if ai_provider != "chatgpt":
 		return
 	_new_chat()
 	var need_consent := str(siwc.session.get("status", "")) == "connected" and not bool(siwc.session.get("sharing", false))
@@ -345,24 +344,26 @@ func _sign_in() -> void:
 func _cancel_active_request() -> void:
 	if api_mode:
 		client.cancel()
-	else:
+	elif ai_provider == "chatgpt":
 		siwc.cancel()
+	else:
+		local_client.cancel()
 
 
 func _sign_out() -> void:
-	if api_mode:
+	if ai_provider != "chatgpt":
 		return
 	_new_chat()
 	siwc.disconnect_account()
 
 
-func _on_siwc_session(state: Dictionary) -> void:
-	if not api_mode:
+func _on_siwc_session(_state: Dictionary) -> void:
+	if ai_provider == "chatgpt":
 		_set_account_ui()
 
 
 func _on_siwc_models(available: Array) -> void:
-	if api_mode:
+	if ai_provider != "chatgpt":
 		return
 	model_select.clear()
 	for entry in available:
@@ -510,12 +511,12 @@ func _instructions() -> String:
 
 
 func _send() -> void:
-	if client.is_busy() or siwc.is_busy():
+	if client.is_busy() or siwc.is_busy() or local_client.busy:
 		return
 	if api_mode and not client.has_key():
 		_add_message("Builder", "Укажите API-ключ OpenAI или переключитесь на вход через ChatGPT.", true)
 		return
-	if not api_mode and not siwc.can_chat():
+	if ai_provider == "chatgpt" and not siwc.can_chat():
 		_add_message("Builder", "Войдите в ChatGPT и разрешите использование подписки. Дождитесь загрузки моделей.", true)
 		return
 	if model_select.item_count == 0 or model_select.selected < 0:
@@ -541,8 +542,11 @@ func _send() -> void:
 	if api_mode:
 		if not client.ask(actual, history, model, _instructions()):
 			_set_busy(false)
-	else:
+	elif ai_provider == "chatgpt":
 		if not siwc.ask(actual, history, model, _instructions()):
+			_set_busy(false)
+	else:
+		if not local_client.ask(actual, history, model, _instructions()):
 			_set_busy(false)
 
 
@@ -552,7 +556,8 @@ func _on_answer(text: String) -> void:
 	pending_message = ""
 	pending_bubble = null
 	_forget_file()
-	_add_message("ChatGPT", text, true)
+	var author := "ChatGPT" if ai_provider == "chatgpt" else ("Ollama" if ai_provider == "ollama" else ("LM Studio" if ai_provider == "lm_studio" else "OpenAI"))
+	_add_message(author, text, true)
 	_set_busy(false)
 
 
@@ -576,6 +581,8 @@ func _set_busy(value: bool) -> void:
 	cancel_button.disabled = not value
 	model_select.disabled = value
 	project_select.disabled = value
+	provider_select.disabled = value
+	local_refresh_button.disabled = value
 
 
 func _new_chat() -> void:
@@ -583,6 +590,8 @@ func _new_chat() -> void:
 		client.cancel()
 	if siwc.is_busy():
 		siwc.cancel()
+	if local_client.busy:
+		local_client.cancel()
 	history.clear()
 	pending_message = ""
 	pending_bubble = null
@@ -606,16 +615,18 @@ func _copy_last_answer() -> void:
 func _add_message(name: String, text: String, assistant: bool = false) -> PanelContainer:
 	var panel := PanelContainer.new()
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#1b293d") if assistant else Color("#263a51")
-	style.set_corner_radius_all(10)
-	style.set_content_margin_all(13)
+	style.bg_color = UI.SURFACE if assistant else Color("#22254F")
+	style.set_corner_radius_all(14)
+	style.set_content_margin_all(15)
+	style.set_border_width_all(1)
+	style.border_color = UI.BORDER
 	panel.add_theme_stylebox_override("panel", style)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	chat_messages.add_child(panel)
 	var layout := VBoxContainer.new()
 	layout.add_theme_constant_override("separation", 5)
 	panel.add_child(layout)
-	var heading := _make_note(layout, name, Color("#7bd0ff") if assistant else Color("#e4edfc"))
+	var heading := _make_note(layout, name, UI.ACCENT_HOVER if assistant else UI.TEXT)
 	heading.add_theme_font_size_override("font_size", 15)
 	var message := RichTextLabel.new()
 	message.bbcode_enabled = false
