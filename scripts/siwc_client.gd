@@ -85,6 +85,10 @@ func is_busy() -> bool:
 	return _chat_busy or _login_busy
 
 
+func is_signing_in() -> bool:
+	return _login_busy
+
+
 func can_chat() -> bool:
 	return _connected and bool(session.get("sharing", false)) and not models.is_empty()
 
