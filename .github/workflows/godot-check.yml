@@ -60,3 +60,12 @@ jobs:
           if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error|Unexpected NUL character' godot-app.log; then
             exit 1
           fi
+      - name: Window mode headless regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path . -s res://tests/window_mode_test.gd 2>&1 | tee godot-window-test.log
+          grep -F 'Builder fullscreen mode regression checks passed.' godot-window-test.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error' godot-window-test.log; then
+            exit 1
+          fi
