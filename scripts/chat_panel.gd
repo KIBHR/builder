@@ -265,7 +265,7 @@ func _sign_out() -> void:
 	if api_mode:
 		return
 	_new_chat()
-	siwc.disconnect()
+	siwc.disconnect_account()
 
 
 func _on_siwc_session(state: Dictionary) -> void:
