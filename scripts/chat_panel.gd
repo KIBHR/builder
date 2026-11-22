@@ -3,6 +3,7 @@ extends VBoxContainer
 signal model_changed(model: String)
 
 const OpenAIClient = preload("res://scripts/openai_client.gd")
+const SIWCClient = preload("res://scripts/siwc_client.gd")
 const MAX_FILE_SIZE := 48 * 1024
 const ALLOWED_EXTENSIONS := ["gd", "md", "txt", "json", "yml", "yaml", "py", "php", "js", "ts", "tsx", "jsx", "html", "css", "sql", "toml", "xml", "sh", "go", "rs", "java", "cpp", "h", "cs"]
 const MODELS := ["gpt-6.2-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-5.4-mini"]
@@ -10,6 +11,13 @@ const MODELS := ["gpt-6.2-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-5.4-mini"]
 var config: Dictionary = {}
 var history: Array = []
 var client
+var siwc
+var api_mode := false
+var api_mode_toggle: CheckBox
+var api_credential_row: HBoxContainer
+var login_button: Button
+var logout_button: Button
+var account_status: Label
 var model_select: OptionButton
 var project_select: OptionButton
 var key_input: LineEdit
@@ -32,9 +40,19 @@ func _ready() -> void:
 	add_child(client)
 	client.answered.connect(_on_answer)
 	client.failed.connect(_on_error)
+	siwc = SIWCClient.new()
+	add_child(siwc)
+	siwc.bridge_ready.connect(func(): account_status.text = "Локальный модуль готов. Войдите через ChatGPT.")
+	siwc.bridge_failed.connect(func(reason: String): account_status.text = reason)
+	siwc.session_changed.connect(_on_siwc_session)
+	siwc.models_changed.connect(_on_siwc_models)
+	siwc.response_received.connect(_on_answer)
+	siwc.response_failed.connect(_on_siwc_error)
+	siwc.sign_in_failed.connect(func(reason: String): account_status.text = "Ошибка входа: " + reason)
 	_build_interface()
 	_update_key_label()
-	_add_message("Builder", "Встроенный чат готов. Укажите API-ключ OpenAI или переменную OPENAI_API_KEY. Можно выбрать проект и добавить файл перед отправкой сообщения.", true)
+	_set_account_ui()
+	_add_message("Builder", "Авторизация без API-ключа: нажмите «Продолжить с ChatGPT», войдите в браузере и разрешите использование подписки. Альтернативный API-ключ не обязателен.", true)
 
 
 func configure(data: Dictionary) -> void:
@@ -48,6 +66,9 @@ func configure(data: Dictionary) -> void:
 			break
 	_refresh_projects()
 	_update_key_label()
+	if not siwc.is_available():
+		siwc.start(str(data.get("node_binary", "node")))
+	_set_account_ui()
 
 
 func _make_note(parent: Node, value: String, tint: Color = Color("#acbdd3")) -> Label:
@@ -79,9 +100,31 @@ func _build_interface() -> void:
 	new_chat.pressed.connect(_new_chat)
 	toolbar.add_child(new_chat)
 
-	var credential_row := HBoxContainer.new()
-	credential_row.add_theme_constant_override("separation", 8)
-	add_child(credential_row)
+	var account_row := HBoxContainer.new()
+	account_row.add_theme_constant_override("separation", 8)
+	add_child(account_row)
+	login_button = Button.new()
+	login_button.text = "Продолжить с ChatGPT"
+	login_button.pressed.connect(_sign_in)
+	account_row.add_child(login_button)
+	logout_button = Button.new()
+	logout_button.text = "Отключить аккаунт"
+	logout_button.pressed.connect(_sign_out)
+	account_row.add_child(logout_button)
+	var manage := Button.new()
+	manage.text = "Лимиты подписки ↗"
+	manage.pressed.connect(func(): OS.shell_open("https://chatgpt.com/settings/usage"))
+	account_row.add_child(manage)
+	account_status = _make_note(self, "Подключение ChatGPT не запущено.")
+	api_mode_toggle = CheckBox.new()
+	api_mode_toggle.text = "Вместо подписки использовать OpenAI API-ключ"
+	api_mode_toggle.toggled.connect(_toggle_api_mode)
+	add_child(api_mode_toggle)
+	api_credential_row = HBoxContainer.new()
+	api_credential_row.add_theme_constant_override("separation", 8)
+	api_credential_row.visible = false
+	add_child(api_credential_row)
+	var credential_row := api_credential_row
 	key_input = LineEdit.new()
 	key_input.secret = true
 	key_input.secret_character = "•"
@@ -97,6 +140,7 @@ func _build_interface() -> void:
 	clear_key.pressed.connect(_clear_key)
 	credential_row.add_child(clear_key)
 	key_status = _make_note(self, "")
+	key_status.visible = false
 
 	chat_scroll = ScrollContainer.new()
 	chat_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -151,6 +195,100 @@ func _build_interface() -> void:
 	copy_button.text = "Копировать ответ"
 	copy_button.pressed.connect(_copy_last_answer)
 	actions.add_child(copy_button)
+
+
+func _toggle_api_mode(value: bool) -> void:
+	if siwc.is_busy() or client.is_busy():
+		api_mode_toggle.set_pressed_no_signal(api_mode)
+		return
+	api_mode = value
+	api_credential_row.visible = value
+	key_status.visible = value
+	_new_chat()
+	if value:
+		_set_api_models()
+	else:
+		_on_siwc_models(siwc.models)
+	_set_account_ui()
+
+
+func _set_api_models() -> void:
+	model_select.clear()
+	for model in MODELS:
+		model_select.add_item(model)
+	model_select.select(0)
+
+
+func _set_account_ui() -> void:
+	if account_status == null:
+		return
+	login_button.disabled = api_mode or siwc.is_busy()
+	logout_button.disabled = api_mode or siwc.is_busy() or siwc.session.get("status", "") != "connected"
+	if api_mode:
+		account_status.text = "Режим OpenAI API включён. Вход через ChatGPT не требуется."
+		return
+	var state := str(siwc.session.get("status", "disconnected"))
+	var display := str(siwc.session.get("profileLabel", ""))
+	var identity: Variant = siwc.session.get("identity", {})
+	if identity is Dictionary:
+		display = str(identity.get("email", display))
+	if state == "connecting":
+		account_status.text = "Ожидается подтверждение входа в официальном браузере OpenAI…"
+	elif state == "connected" and bool(siwc.session.get("sharing", false)):
+		account_status.text = "Подключён ChatGPT: " + display + ". Использование подписки разрешено."
+	elif state == "connected":
+		account_status.text = "ChatGPT подключён, но доступ к лимиту подписки не разрешён. Войдите повторно и подтвердите разрешения."
+	elif not siwc.is_available():
+		account_status.text = "Вход через ChatGPT: ожидается запуск локального модуля."
+	else:
+		account_status.text = "Не подключён. Нажмите «Продолжить с ChatGPT»."
+
+
+func _sign_in() -> void:
+	if api_mode:
+		return
+	_new_chat()
+	siwc.sign_in()
+	account_status.text = "Откройте браузер и подтвердите вход в ChatGPT."
+
+
+func _sign_out() -> void:
+	if api_mode:
+		return
+	_new_chat()
+	siwc.disconnect()
+
+
+func _on_siwc_session(state: Dictionary) -> void:
+	if not api_mode:
+		_set_account_ui()
+
+
+func _on_siwc_models(available: Array) -> void:
+	if api_mode:
+		return
+	model_select.clear()
+	for entry in available:
+		if entry is Dictionary:
+			var slug := str(entry.get("slug", ""))
+			if not slug.is_empty():
+				model_select.add_item(slug)
+	if model_select.item_count > 0:
+		var requested := str(config.get("ai_model", ""))
+		for index in range(model_select.item_count):
+			if model_select.get_item_text(index) == requested:
+				model_select.select(index)
+				break
+		if model_select.selected < 0:
+			model_select.select(0)
+	_set_account_ui()
+
+
+func _on_siwc_error(reason: String) -> void:
+	if not pending_message.is_empty():
+		_on_error(reason)
+	else:
+		_add_message("Builder", reason, true)
 
 
 func _apply_key() -> void:
@@ -272,10 +410,16 @@ func _instructions() -> String:
 
 
 func _send() -> void:
-	if client.is_busy():
+	if client.is_busy() or siwc.is_busy():
 		return
-	if not client.has_key():
-		_add_message("Builder", "Укажите API-ключ OpenAI перед отправкой.", true)
+	if api_mode and not client.has_key():
+		_add_message("Builder", "Укажите API-ключ OpenAI или переключитесь на вход через ChatGPT.", true)
+		return
+	if not api_mode and not siwc.can_chat():
+		_add_message("Builder", "Войдите в ChatGPT и разрешите использование подписки. Дождитесь загрузки моделей.", true)
+		return
+	if model_select.item_count == 0 or model_select.selected < 0:
+		_add_message("Builder", "Нет доступных моделей у выбранного аккаунта.", true)
 		return
 	var user_text := message_input.text.strip_edges()
 	if user_text.is_empty():
@@ -294,8 +438,12 @@ func _send() -> void:
 	message_input.clear()
 	_set_busy(true)
 	var model := model_select.get_item_text(model_select.selected)
-	if not client.ask(actual, history, model, _instructions()):
-		_set_busy(false)
+	if api_mode:
+		if not client.ask(actual, history, model, _instructions()):
+			_set_busy(false)
+	else:
+		if not siwc.ask(actual, history, model, _instructions()):
+			_set_busy(false)
 
 
 func _on_answer(text: String) -> void:
@@ -333,6 +481,8 @@ func _set_busy(value: bool) -> void:
 func _new_chat() -> void:
 	if client.is_busy():
 		client.cancel()
+	if siwc.is_busy():
+		siwc.cancel()
 	history.clear()
 	pending_message = ""
 	pending_bubble = null
