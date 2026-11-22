@@ -599,6 +599,7 @@ func _show_accounts() -> void:
 	welcome.add_child(actions)
 	UI.accent(_add_button(actions, "Войти через GitHub", _start_github_login))
 	_add_button(actions, "Проверить подключение", _refresh_github_accounts)
+	_add_button(actions, "Установить GitHub CLI ↗", func(): OS.shell_open("https://cli.github.com/"))
 	var current := _detect_github_accounts()
 	var status := _panel()
 	_add_note(status, "ТЕКУЩЕЕ ПОДКЛЮЧЕНИЕ", UI.ACCENT_HOVER)
@@ -667,6 +668,11 @@ func _refresh_github_accounts() -> void:
 
 
 func _start_github_login() -> void:
+	var gh_check: Dictionary = CLI.run(_gh(), ["--version"])
+	if not gh_check["ok"]:
+		OS.shell_open("https://cli.github.com/")
+		_message("Сначала установите GitHub CLI (gh). Открыта официальная страница установки.", true)
+		return
 	var command := "gh auth login --hostname github.com --web --git-protocol https"
 	DisplayServer.clipboard_set(command)
 	var pid := -1
