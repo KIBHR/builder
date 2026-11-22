@@ -11,7 +11,9 @@ static func defaults() -> Dictionary:
 		"git_binary": "git",
 		"gh_binary": "gh",
 		"ai_model": "gpt-6.2-sol",
-		"node_binary": "node"
+		"node_binary": "node",
+		"ai_provider": "chatgpt",
+		"clone_root": ""
 	}
 
 
