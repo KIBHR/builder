@@ -103,6 +103,14 @@ const bridgeKey = randomBytes(32).toString("hex");
 let lastHeartbeat = Date.now();
 let activeRequest = null;
 let loginBusy = false;
+let authAttempt = { phase: "idle", startedAt: null, error: null };
+function publicAuthState() {
+  return {
+    phase: authAttempt.phase,
+    startedAt: authAttempt.startedAt,
+    ...(authAttempt.error ? { error: authAttempt.error } : {}),
+  };
+}
 
 function respond(response, status, body) {
   if (response.writableEnded) return;
@@ -159,6 +167,9 @@ async function handle(request, response) {
   if (request.method === "GET" && pathname === "/session") {
     return respond(response, 200, { session: await chatgpt.getSession() });
   }
+  if (request.method === "GET" && pathname === "/auth/status") {
+    return respond(response, 200, { auth: publicAuthState(), session: await chatgpt.getSession() });
+  }
   if (request.method === "GET" && pathname === "/models") {
     const session = await chatgpt.getSession();
     if (!session.sharing) return respond(response, 200, { models: [] });
@@ -166,12 +177,16 @@ async function handle(request, response) {
   }
   if (request.method === "POST" && pathname === "/signin") {
     if (loginBusy || activeRequest) return respond(response, 409, { error: "Дождитесь завершения предыдущего действия." });
+    const params = await readJson(request);
     loginBusy = true;
-    try {
-      const params = await readJson(request);
-      const session = await chatgpt.signIn({ reconsent: params.reconsent === true });
-      return respond(response, 200, { session });
-    } finally { loginBusy = false; }
+    authAttempt = { phase: "waiting_browser", startedAt: Date.now(), error: null };
+    // Never hold the Godot HTTP request open during interactive browser consent.
+    // The official SDK listens on 127.0.0.1 and validates the OAuth callback.
+    void chatgpt.signIn({ reconsent: params.reconsent === true })
+      .then(() => { authAttempt = { ...authAttempt, phase: "connected", error: null }; })
+      .catch((error) => { authAttempt = { ...authAttempt, phase: "failed", error: safeFailure(error) }; })
+      .finally(() => { loginBusy = false; });
+    return respond(response, 202, { started: true, auth: publicAuthState() });
   }
   if (request.method === "POST" && pathname === "/disconnect") {
     if (activeRequest || loginBusy) return respond(response, 409, { error: "Сначала отмените текущий запрос." });
@@ -205,7 +220,10 @@ async function handle(request, response) {
   }
   if (request.method === "POST" && pathname === "/cancel") {
     activeRequest?.abort();
-    if (loginBusy) chatgpt.cancelSignIn();
+    if (loginBusy) {
+      authAttempt = { ...authAttempt, phase: "cancelling" };
+      chatgpt.cancelSignIn();
+    }
     return respond(response, 200, { cancelled: true });
   }
   if (request.method === "POST" && pathname === "/stop") {
