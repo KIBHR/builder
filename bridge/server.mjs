@@ -168,7 +168,8 @@ async function handle(request, response) {
     if (loginBusy || activeRequest) return respond(response, 409, { error: "Дождитесь завершения предыдущего действия." });
     loginBusy = true;
     try {
-      const session = await chatgpt.signIn();
+      const params = await readJson(request);
+      const session = await chatgpt.signIn({ reconsent: params.reconsent === true });
       return respond(response, 200, { session });
     } finally { loginBusy = false; }
   }
