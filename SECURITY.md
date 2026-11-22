@@ -1,10 +1,12 @@
-# Security and privacy
+# Безопасность Builder
 
-- Never commit GitHub/OpenAI tokens, ChatGPT cookies, private repo source, local config, or secrets to the repo.
-- The OpenAI key is read from `OPENAI_API_KEY` or a masked input for the **current process**; it is not written to settings, chat history or logs.
-- HTTPS requests go to the fixed `https://api.openai.com/v1/responses` endpoint; credentials are not sent to any custom endpoint.
-- Requests are user-triggered. Only an explicitly chosen file (up to 48 KiB, limited text extensions) can be attached; review for private data before sending.
-- Local chat history and attached contents are in RAM; `store: false` does not supersede OpenAI Platform data retention and privacy terms.
-- The GitHub CLI holds GitHub credentials. Builder changes active `gh` account only on explicit action.
-- Mirror push requires approval, verified primary origin, clean checkout and exact local/origin SHA, and forbids `--force`.
-- In production, add proper keychain storage, safety review of filesystem boundaries/symlinks, background Git workers with timeouts, key rotation and tested signed installers.
+1. **Пароли и cookies ChatGPT Builder не принимает.** OAuth через системный браузер и официальный OpenAI SIWC DevKit, только из локального приложения.
+2. **Токены не попадают в Godot.** Внутри Node sidecar SDK проверяет OpenID Connect identity, permission scopes and PKCE; локальное хранилище токенов зашифровано AES-256-GCM, а ключ шифрования размещается в операционном хранилище секретов через `@napi-rs/keyring`. При недоступности хранилища секретов нет fallback на открытый текст.
+3. **Localhost isolation.** `bridge/server.mjs` слушает только `127.0.0.1` на случайном порту, принимает уникальный секретный заголовок из защищённого handshake-файла и отклоняет запросы с `Origin`. Ни CORS `*`, ни удалённого сервера нет.
+4. **Контроль пользователя.** Все запросы отправляются вручную, разрешения планового биллинга проверяются по флагу `sharing`, нет автоматического переключения подписок/аккаунтов или фоновых платных вызовов.
+5. **Ограничения данных.** Отправляются выбранный текст, до десяти предыдущих сообщений, название проекта/ветки и явно выбранный файл исходников (до 48 КБ). История чата остаётся в оперативной памяти Godot. Перед отправкой проверьте секреты внутри приложенных файлов.
+6. **Локальные настройки `user://builder.json`** содержат лишь пути к Git/gh/Node, имена репозиториев и выбранную модель; никаких токенов там нет. `third_party/siwc-devkit` и `bridge/node_modules` исключены из Git.
+7. **SDK license.** Официальный OpenAI DevKit поставляется под отдельной некоммерческой лицензией; вы обязаны соблюдать условия при распространении приложения.
+8. **Для производственного релиза** необходимы аудит символических ссылок в file picker, review of node modules, пакетирование и подпись sidecar, сквозное тестирование OAuth/reconsent/revocation, отработка ошибок хранения и поддерживаемые бинарники на целевых ОС.
+
+Дополнительная документация: [Sign in with ChatGPT Quickstart](https://developers.openai.com/siwc/quickstart), [OpenAI DevKit](https://github.com/openai/sign-in-with-chatgpt-devkit), [условия SIWC](https://openai.com/policies/sign-in-with-chatgpt-terms/).
