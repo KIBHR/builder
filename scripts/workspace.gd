@@ -626,6 +626,8 @@ func _show_accounts() -> void:
 		var title := _add_note(status, "✓  @" + current + " — подключён", UI.GOOD)
 		UI.label(title, 20)
 		_add_button(status, "Перейти к репозиториям →", _show_catalog)
+	if not OS.get_environment("GH_TOKEN").is_empty() or not OS.get_environment("GITHUB_TOKEN").is_empty():
+		_add_note(status, "ВНИМАНИЕ: переменная GH_TOKEN/GITHUB_TOKEN перекрывает выбор аккаунта GitHub CLI. Уберите её перед переключением.", UI.DANGER)
 	var available: Array = config.get("accounts", [])
 	if not available.is_empty():
 		var accounts := _panel()
@@ -722,9 +724,16 @@ func _start_github_login() -> void:
 	var pid := -1
 	match OS.get_name():
 		"macOS":
-			# macOS Terminal shows the device code and keeps the login interactive.
-			var apple_script := "tell application \"Terminal\" to do script \"" + shell_command.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
-			pid = OS.create_process("osascript", ["-e", apple_script])
+			# Launch a temporary .command file with Terminal; avoid AppleScript's
+			# Automation permission, which silently prevented account onboarding.
+			var command_file := ProjectSettings.globalize_path("user://github-add-account.command")
+			var script := FileAccess.open(command_file, FileAccess.WRITE)
+			if script != null:
+				script.store_string("#!/bin/zsh\n" + shell_command + "\n" + "echo 'Вернитесь в Builder и нажмите Проверить подключение.'\n" + "read -r '?Нажмите Enter, чтобы закрыть окно… '\n")
+				script.close()
+				var output: Array = []
+				if OS.execute("/bin/chmod", ["700", command_file], output, true) == 0:
+					pid = OS.create_process("/usr/bin/open", ["-a", "Terminal", command_file])
 		"Windows":
 			pid = OS.create_process("powershell.exe", ["-NoProfile", "-Command", "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoExit','-Command','gh auth login --hostname github.com --web --git-protocol https --clipboard')"])
 		"Linux", "FreeBSD", "NetBSD", "OpenBSD":
