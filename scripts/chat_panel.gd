@@ -390,7 +390,7 @@ func _attach_file(path: String) -> void:
 		file_label.text = "Файл больше 48 КБ. Выберите меньший."
 		return
 	# Godot Strings cannot contain NUL. Scan raw bytes BEFORE UTF-8 conversion:
-	# a "\u0000" literal itself triggers editor Unicode parsing errors.
+	# Escaped NUL literals also trigger Unicode parsing errors on Godot 4.7.
 	var raw_bytes: PackedByteArray = file.get_buffer(file.get_length())
 	if raw_bytes.has(0):
 		file_label.text = "Двоичный файл не поддерживается"
