@@ -19,4 +19,10 @@ export_credentials.cfg
 # Local workspace and credentials must never be committed
 builder.json
 workspaces/
+# OAuth SDK downloaded and installed locally, do not commit vendor deps
+third_party/siwc-devkit/
+bridge/node_modules/
+bridge/.env
+bridge/.env.*
+
 credentials/
