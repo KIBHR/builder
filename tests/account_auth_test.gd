@@ -37,7 +37,7 @@ func _run() -> void:
 	siwc._login_busy = true
 	siwc._auth_started_ticks = Time.get_ticks_msec()
 	siwc._process_result("signin", HTTPRequest.RESULT_SUCCESS, 202, JSON.stringify({"started": true}).to_utf8_buffer())
-	if not siwc._auth_timer.is_stopped() and not siwc._login_busy:
+	if siwc._auth_timer.is_stopped() or not siwc._login_busy:
 		push_error("OAuth request must remain pending until callback")
 		quit(1)
 		return
