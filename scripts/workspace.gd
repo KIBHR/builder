@@ -4,11 +4,18 @@ extends Control
 
 const Store = preload("res://scripts/data_store.gd")
 const CLI = preload("res://scripts/cli.gd")
+const ChatPanel = preload("res://scripts/chat_panel.gd")
 
 var config: Dictionary = {}
 var body: VBoxContainer
 var heading: Label
 var status_label: Label
+var content_scroll: ScrollContainer
+var chat_panel
+var window_mode_button: Button
+var previous_window_mode: int = Window.MODE_WINDOWED
+var window_restore_size := Vector2i(1180, 760)
+var window_restore_position := Vector2i(100, 100)
 
 
 func _ready() -> void:
@@ -51,13 +58,14 @@ func _build_shell() -> void:
 	_add_note(menu, "AI DEVELOPMENT WORKSPACE", Color("#98a7ba"))
 	menu.add_child(HSeparator.new())
 	_add_button(menu, "Репозитории", Callable(self, "_show_projects"))
+	_add_button(menu, "ChatGPT · в Builder", Callable(self, "_show_chat"))
 	_add_button(menu, "GitHub-аккаунты", Callable(self, "_show_accounts"))
 	_add_button(menu, "Настройки", Callable(self, "_show_settings"))
 	var push_down := Control.new()
 	push_down.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	menu.add_child(push_down)
-	_add_button(menu, "Открыть ChatGPT ↗", func(): OS.shell_open("https://chatgpt.com/"))
-	_add_note(menu, "ChatGPT запускается в браузере.\nДанные авторизации не сохраняются.", Color("#98a7ba"))
+	_add_button(menu, "ChatGPT.com ↗", func(): OS.shell_open("https://chatgpt.com/"))
+	_add_note(menu, "Встроенный чат использует OpenAI API.\nВеб-версия открывается отдельно.", Color("#98a7ba"))
 
 	var main := VBoxContainer.new()
 	main.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -67,14 +75,24 @@ func _build_shell() -> void:
 	top.add_theme_constant_override("margin_top", 20)
 	top.add_theme_constant_override("margin_right", 22)
 	main.add_child(top)
+	var header_row := HBoxContainer.new()
+	header_row.add_theme_constant_override("separation", 12)
+	top.add_child(header_row)
 	heading = Label.new()
+	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	heading.add_theme_color_override("font_color", text_color)
 	heading.add_theme_font_size_override("font_size", 28)
-	top.add_child(heading)
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	main.add_child(scroll)
+	header_row.add_child(heading)
+	window_mode_button = Button.new()
+	window_mode_button.custom_minimum_size = Vector2(185, 38)
+	window_mode_button.tooltip_text = "Переключение оконного и полноэкранного режимов (F11)"
+	window_mode_button.pressed.connect(_toggle_window_mode)
+	header_row.add_child(window_mode_button)
+	_update_window_button()
+	content_scroll = ScrollContainer.new()
+	content_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main.add_child(content_scroll)
 	body = VBoxContainer.new()
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 13)
@@ -83,8 +101,14 @@ func _build_shell() -> void:
 	margins.add_theme_constant_override("margin_left", 2)
 	margins.add_theme_constant_override("margin_right", 22)
 	margins.add_theme_constant_override("margin_bottom", 18)
-	scroll.add_child(margins)
+	content_scroll.add_child(margins)
 	margins.add_child(body)
+	chat_panel = ChatPanel.new()
+	chat_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	chat_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chat_panel.visible = false
+	main.add_child(chat_panel)
+	chat_panel.model_changed.connect(_on_ai_model_changed)
 	status_label = Label.new()
 	status_label.text = "Готово. Для приватных репозиториев выполните gh auth login в терминале."
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -97,6 +121,8 @@ func _build_shell() -> void:
 
 
 func _clear_page(title: String) -> void:
+	chat_panel.hide()
+	content_scroll.show()
 	heading.text = title
 	for child in body.get_children():
 		body.remove_child(child)
@@ -420,7 +446,9 @@ func _show_settings() -> void:
 	_add_button(form, "Проверить инструменты", func(): _check_tools())
 	var panel := _panel()
 	_add_note(panel, "Интеграции", Color("#71c4ff"))
-	_add_note(panel, "ChatGPT: открывается в системном браузере. Встраивание ChatGPT Web и авторизация Sign in with ChatGPT запланированы отдельно; доступ к текущим чатам через OAuth не предоставляется.")
+	_add_note(panel, "ChatGPT: встроенная панель использует официальный OpenAI Responses API. Ключ из OPENAI_API_KEY или вводится на странице ChatGPT только на текущий запуск. Подписка ChatGPT и API оплачиваются отдельно.")
+	_add_note(panel, "Встроенный ChatGPT Web с входом в подписку не реализован: его нельзя надёжно заменить обычным iframe. Доступ к переписке веб-ChatGPT через API отсутствует.")
+	_add_note(panel, "Полноэкранный режим: кнопка в шапке приложения или F11. Возврат — повторное нажатие.")
 	_add_note(panel, "GitHub Actions: приложение показывает последний запуск, но не заявляет о наличии несуществующего публичного API для остатка минут каждого пользователя.")
 	_add_note(panel, "Автоматическая смена плательщика/репозитория при исчерпании квоты отключена. Для непрерывного CI предпочтительны собственные runners или согласованные организации с независимой оплатой.")
 	_add_note(panel, "Локальный файл конфигурации: " + ProjectSettings.globalize_path(Store.CONFIG_PATH))
@@ -443,3 +471,44 @@ func _check_tools() -> void:
 		_message("Git и GitHub CLI доступны.")
 	else:
 		_message("Не найдены или не запускаются: " + ("git " if not git["ok"] else "") + ("gh" if not gh["ok"] else ""), true)
+
+
+func _show_chat() -> void:
+	heading.text = "ChatGPT · встроенный чат"
+	content_scroll.hide()
+	chat_panel.show()
+	chat_panel.configure(config)
+
+
+func _on_ai_model_changed(model: String) -> void:
+	config["ai_model"] = model
+	_save()
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F11:
+		_toggle_window_mode()
+		get_viewport().set_input_as_handled()
+
+
+func _toggle_window_mode() -> void:
+	var window := get_window()
+	if window.mode == Window.MODE_FULLSCREEN or window.mode == Window.MODE_EXCLUSIVE_FULLSCREEN:
+		window.mode = previous_window_mode
+		if previous_window_mode == Window.MODE_WINDOWED:
+			window.size = window_restore_size
+			window.position = window_restore_position
+	else:
+		previous_window_mode = window.mode
+		if window.mode == Window.MODE_WINDOWED:
+			window_restore_size = window.size
+			window_restore_position = window.position
+		window.mode = Window.MODE_FULLSCREEN
+	_update_window_button()
+
+
+func _update_window_button() -> void:
+	if window_mode_button == null:
+		return
+	var mode := get_window().mode
+	window_mode_button.text = "Оконный режим  F11" if mode == Window.MODE_FULLSCREEN or mode == Window.MODE_EXCLUSIVE_FULLSCREEN else "На весь экран  F11"
