@@ -1,25 +1,28 @@
-# Godot 4.2+ specific ignores
-~*.dll
-
-# Godot 4+ specific ignores
+# Godot generated files
 .godot/
-.nomedia
-
-# Godot-specific ignores
 .import/
+*.translation
+*.tmp
+.mono/
+
+# Export and local credentials
 export.cfg
 export_credentials.cfg
-*.tmp
-
-# Imported translations (automatically generated from CSV files)
-*.translation
-
-# Mono-specific ignores
-.mono/
-data_*/
-mono_crash.*.json
-
-# Export outputs
 *.exe
-# Uncomment if your project does not version PCK files as runtime dependencies.
-# *.pck
+*.dmg
+*.app/
+*.pck
+.env
+.env.*
+!*.env.example
+
+# Local workspace and credentials must never be committed
+builder.json
+workspaces/
+# OAuth SDK downloaded and installed locally, do not commit vendor deps
+third_party/siwc-devkit/
+bridge/node_modules/
+bridge/.env
+bridge/.env.*
+
+credentials/

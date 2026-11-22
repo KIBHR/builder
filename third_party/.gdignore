@@ -1,0 +1,1 @@
+# Installed OpenAI SDK is executed by the Node sidecar, not imported as Godot resources.

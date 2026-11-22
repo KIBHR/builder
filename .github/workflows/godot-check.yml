@@ -1,0 +1,102 @@
+name: Godot syntax and startup smoke test
+
+on:
+  push:
+    branches: [main, feature/godot-workspace-mvp]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  godot-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check ChatGPT bridge JavaScript syntax
+        run: |
+          node --check bridge/server.mjs
+          node --check bridge/setup.mjs
+      - name: Download official Godot editor
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 15 \
+            -o /tmp/godot.zip \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          mkdir -p /tmp/godot
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+      - name: Import and parse scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --editor --path . --quit 2>&1 | tee godot-editor.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error|Unexpected NUL character' godot-editor.log; then
+            exit 1
+          fi
+      - name: Print generated script UIDs
+        shell: bash
+        run: |
+          for uid in scripts/*.gd.uid; do
+            echo "$uid"
+            cat "$uid"
+            echo
+          done
+      - name: GitHub and ChatGPT auth state tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path . -s res://tests/account_auth_test.gd 2>&1 | tee godot-auth-test.log
+          grep -F 'Builder GitHub accounts and ChatGPT callback tests passed.' godot-auth-test.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error|ERROR:' godot-auth-test.log; then
+            exit 1
+          fi
+      - name: Verify tracked Godot UID files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for uid in scripts/*.gd.uid; do
+            echo "$uid"
+            cat "$uid"
+            echo
+          done
+          while IFS= read -r -d '' script; do
+            test -f "${script}.uid" || { echo "Missing UID: ${script}.uid"; exit 1; }
+            git ls-files --error-unmatch "${script}.uid" >/dev/null
+          done < <(find scripts -type f -name '*.gd' -print0)
+          if grep -R -nF --include='*.gd' '\u0000' scripts; then
+            echo 'NUL escape is not allowed in Godot source'
+            exit 1
+          fi
+      - name: Headless application startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path . --quit-after 3 2>&1 | tee godot-app.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error|Unexpected NUL character' godot-app.log; then
+            exit 1
+          fi
+      - name: Window mode headless regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path . -s res://tests/window_mode_test.gd 2>&1 | tee godot-window-test.log
+          grep -F 'Builder fullscreen mode regression checks passed.' godot-window-test.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error' godot-window-test.log; then
+            exit 1
+          fi
+      - name: Onboarding and AI provider smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path . -s res://tests/onboarding_test.gd 2>&1 | tee godot-onboarding.log
+          grep -F 'Builder quick-start and AI provider smoke checks passed.' godot-onboarding.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error|ERROR:' godot-onboarding.log; then
+            exit 1
+          fi
