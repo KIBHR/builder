@@ -34,6 +34,8 @@ var setup_pid := -1
 var setup_start_ms := 0
 var logout_button: Button
 var account_status: Label
+var auth_issue := ""
+var auth_status_button: Button
 var model_select: OptionButton
 var project_select: OptionButton
 var key_input: LineEdit
@@ -64,7 +66,9 @@ func _ready() -> void:
 	siwc.models_changed.connect(_on_siwc_models)
 	siwc.response_received.connect(_on_answer)
 	siwc.response_failed.connect(_on_siwc_error)
-	siwc.sign_in_failed.connect(func(reason: String): account_status.text = "Ошибка входа: " + reason)
+	siwc.sign_in_failed.connect(_on_auth_failed)
+	siwc.auth_progress.connect(_on_auth_progress)
+	siwc.models_failed.connect(_on_models_failed)
 	local_client = LocalClient.new()
 	add_child(local_client)
 	local_client.models_received.connect(_on_local_models)
@@ -169,6 +173,10 @@ func _build_interface() -> void:
 	login_button.pressed.connect(_sign_in)
 	account_row.add_child(login_button)
 	UI.accent(login_button)
+	auth_status_button = Button.new()
+	auth_status_button.text = "Проверить состояние"
+	auth_status_button.pressed.connect(_refresh_auth_status)
+	account_row.add_child(auth_status_button)
 	setup_button = Button.new()
 	setup_button.text = "Установить вход в ChatGPT"
 	setup_button.pressed.connect(_start_chatgpt_setup)
@@ -366,9 +374,16 @@ func _set_account_ui() -> void:
 		return
 	setup_button.visible = not _chatgpt_installed()
 	login_button.disabled = ai_provider != "chatgpt" or not siwc.is_available() or siwc.is_busy()
+	auth_status_button.disabled = ai_provider != "chatgpt" or not siwc.is_available()
 	login_button.text = "Разрешить использование подписки" if str(siwc.session.get("status", "")) == "connected" and not bool(siwc.session.get("sharing", false)) else "Продолжить с ChatGPT"
 	logout_button.disabled = api_mode or siwc.is_busy() or siwc.session.get("status", "") != "connected"
 	if ai_provider != "chatgpt":
+		return
+	if not auth_issue.is_empty():
+		account_status.text = "ChatGPT: " + auth_issue
+		return
+	if siwc.is_busy():
+		account_status.text = "Ожидается ответ браузера. Авторизация завершится только после перехода на локальный адрес 127.0.0.1."
 		return
 	if setup_pid > 0 and not _chatgpt_installed():
 		account_status.text = "Подготавливается модуль авторизации ChatGPT. Идёт установка зависимостей…"
@@ -397,9 +412,40 @@ func _sign_in() -> void:
 	if ai_provider != "chatgpt":
 		return
 	_new_chat()
+	auth_issue = ""
 	var need_consent := str(siwc.session.get("status", "")) == "connected" and not bool(siwc.session.get("sharing", false))
 	siwc.sign_in(need_consent)
 	account_status.text = "Откройте браузер и подтвердите вход в ChatGPT."
+
+
+func _refresh_auth_status() -> void:
+	auth_issue = ""
+	siwc.refresh()
+	account_status.text = "Проверяю подключение к ChatGPT…"
+
+
+func _on_auth_progress(phase: String, seconds: int) -> void:
+	if ai_provider != "chatgpt":
+		return
+	if phase == "starting":
+		account_status.text = "Готовлю безопасное подключение к OpenAI…"
+	elif phase == "cancelling":
+		account_status.text = "Отменяю авторизацию…"
+	elif seconds < 20:
+		account_status.text = "Откройте окно авторизации OpenAI в браузере. Подтвердите разрешения для Builder. Ожидаю возврата в приложение…"
+	else:
+		account_status.text = "Вход ожидает ответ браузера (" + str(seconds) + " сек.). Он должен перейти на 127.0.0.1/auth/callback на ЭТОМ компьютере. Обычный вход на chatgpt.com недостаточен."
+
+
+func _on_auth_failed(reason: String) -> void:
+	auth_issue = reason
+	if ai_provider == "chatgpt":
+		_set_account_ui()
+
+
+func _on_models_failed(reason: String) -> void:
+	if ai_provider == "chatgpt":
+		account_status.text = reason + " Нажмите «Проверить состояние», чтобы повторить загрузку."
 
 
 func _cancel_active_request() -> void:
@@ -420,6 +466,7 @@ func _sign_out() -> void:
 
 func _on_siwc_session(_state: Dictionary) -> void:
 	if ai_provider == "chatgpt":
+		auth_issue = ""
 		_set_account_ui()
 
 
