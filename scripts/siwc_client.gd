@@ -16,7 +16,7 @@ var models: Array = []
 var _port := 0
 var _secret := ""
 var _pid := -1
-var _ready := false
+var _connected := false
 var _launch_time := 0
 var _handshake_file := ""
 var _poll_timer: Timer
@@ -32,12 +32,12 @@ func _ready() -> void:
 	add_child(_poll_timer)
 	_heartbeat_timer = Timer.new()
 	_heartbeat_timer.wait_time = 30.0
-	_heartbeat_timer.timeout.connect(func(): if _ready: _send("/health", HTTPClient.METHOD_GET, {}, "heartbeat"))
+	_heartbeat_timer.timeout.connect(_ping_bridge)
 	add_child(_heartbeat_timer)
 
 
 func start(executable: String = "node") -> void:
-	if _pid > 0 or _ready:
+	if _pid > 0 or _connected:
 		return
 	node_binary = executable
 	var entry := ProjectSettings.globalize_path("res://bridge/server.mjs")
@@ -62,7 +62,7 @@ func start(executable: String = "node") -> void:
 
 
 func is_available() -> bool:
-	return _ready
+	return _connected
 
 
 func is_busy() -> bool:
@@ -70,11 +70,11 @@ func is_busy() -> bool:
 
 
 func can_chat() -> bool:
-	return _ready and bool(session.get("sharing", false)) and not models.is_empty()
+	return _connected and bool(session.get("sharing", false)) and not models.is_empty()
 
 
 func sign_in() -> void:
-	if not _ready:
+	if not _connected:
 		sign_in_failed.emit("Локальный компонент ChatGPT не запущен. Сначала выполните установку.")
 		return
 	if _login_busy or _chat_busy:
@@ -85,12 +85,12 @@ func sign_in() -> void:
 
 
 func disconnect() -> void:
-	if _ready and not is_busy():
+	if _connected and not is_busy():
 		_send("/disconnect", HTTPClient.METHOD_POST, {}, "disconnect")
 
 
 func refresh() -> void:
-	if _ready:
+	if _connected:
 		_send("/session", HTTPClient.METHOD_GET, {}, "session")
 
 
@@ -120,8 +120,13 @@ func ask(text: String, history: Array, model: String, instructions: String) -> b
 
 
 func cancel() -> void:
-	if _ready:
+	if _connected:
 		_send("/cancel", HTTPClient.METHOD_POST, {}, "cancel")
+
+
+func _ping_bridge() -> void:
+	if _connected:
+		_send("/health", HTTPClient.METHOD_GET, {}, "heartbeat")
 
 
 func _poll_bridge() -> void:
@@ -146,14 +151,14 @@ func _poll_bridge() -> void:
 		return
 	_poll_timer.stop()
 	DirAccess.remove_absolute(_handshake_file)
-	_ready = true
+	_connected = true
 	_heartbeat_timer.start()
 	bridge_ready.emit()
 	refresh()
 
 
 func _send(path: String, method: int, data: Dictionary, action: String, timeout_seconds: float = 30.0) -> void:
-	if not _ready:
+	if not _connected:
 		return
 	var req := HTTPRequest.new()
 	req.timeout = timeout_seconds
