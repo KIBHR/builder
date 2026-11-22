@@ -9,6 +9,8 @@ signal models_changed(models: Array)
 signal response_received(text: String)
 signal response_failed(reason: String)
 signal sign_in_failed(reason: String)
+signal auth_progress(phase: String, seconds: int)
+signal models_failed(reason: String)
 
 var node_binary := "node"
 var last_error := ""
@@ -24,6 +26,9 @@ var _poll_timer: Timer
 var _heartbeat_timer: Timer
 var _chat_busy := false
 var _login_busy := false
+var _auth_timer: Timer
+var _auth_poll_inflight := false
+var _auth_started_ticks := 0
 
 
 func _ready() -> void:
@@ -35,6 +40,10 @@ func _ready() -> void:
 	_heartbeat_timer.wait_time = 30.0
 	_heartbeat_timer.timeout.connect(_ping_bridge)
 	add_child(_heartbeat_timer)
+	_auth_timer = Timer.new()
+	_auth_timer.wait_time = 1.5
+	_auth_timer.timeout.connect(_poll_auth)
+	add_child(_auth_timer)
 
 
 func start(executable: String = "node") -> void:
@@ -88,7 +97,9 @@ func sign_in(reconsent: bool = false) -> void:
 		sign_in_failed.emit("Подождите завершения предыдущего действия.")
 		return
 	_login_busy = true
-	_send("/signin", HTTPClient.METHOD_POST, {"reconsent": reconsent}, "signin", 650.0)
+	_auth_started_ticks = Time.get_ticks_msec()
+	auth_progress.emit("starting", 0)
+	_send("/signin", HTTPClient.METHOD_POST, {"reconsent": reconsent}, "signin", 30.0)
 
 
 func disconnect_account() -> void:
@@ -129,6 +140,19 @@ func ask(text: String, history: Array, model: String, instructions: String) -> b
 func cancel() -> void:
 	if _connected:
 		_send("/cancel", HTTPClient.METHOD_POST, {}, "cancel")
+
+
+func _poll_auth() -> void:
+	if not _connected or not _login_busy or _auth_poll_inflight:
+		return
+	_auth_poll_inflight = true
+	_send("/auth/status", HTTPClient.METHOD_GET, {}, "auth_status", 15.0)
+
+
+func _finish_auth() -> void:
+	_auth_timer.stop()
+	_auth_poll_inflight = false
+	_login_busy = false
 
 
 func _ping_bridge() -> void:
@@ -184,37 +208,75 @@ func _send(path: String, method: int, data: Dictionary, action: String, timeout_
 		_process_result(action, -1, 0, PackedByteArray())
 
 
+func _accept_session(value: Variant) -> void:
+	if not (value is Dictionary):
+		return
+	session = value
+	session_changed.emit(session)
+	if bool(session.get("sharing", false)):
+		_send("/models", HTTPClient.METHOD_GET, {}, "models", 75.0)
+	else:
+		models.clear()
+		models_changed.emit(models)
+
+
 func _process_result(action: String, result: int, status: int, bytes: PackedByteArray) -> void:
 	if action == "heartbeat":
 		return
 	var data: Variant = JSON.parse_string(bytes.get_string_from_utf8())
 	var valid := result == HTTPRequest.RESULT_SUCCESS and status >= 200 and status < 300 and data is Dictionary
 	if not valid:
-		var reason := "Не удалось связаться с локальным ChatGPT-компонентом (HTTP %d)." % status
+		var reason := "Локальный модуль ChatGPT не ответил (HTTP %d, сеть %d)." % [status, result]
 		if data is Dictionary:
 			reason = str(data.get("error", reason))
-		if action == "signin":
-			_login_busy = false
-			sign_in_failed.emit(reason)
-		elif action == "chat":
-			_chat_busy = false
-			response_failed.emit(reason)
-		else:
-			_bridge_error(reason)
+		match action:
+			"signin", "auth_status":
+				_finish_auth()
+				sign_in_failed.emit(reason)
+			"chat":
+				_chat_busy = false
+				response_failed.emit(reason)
+			"models":
+				models_failed.emit("Вход выполнен, но список моделей не загрузился: " + reason)
+			_:
+				_bridge_error(reason)
 		return
 	match action:
-		"session", "signin", "disconnect":
-			if action == "signin":
-				_login_busy = false
-			var new_session: Variant = data.get("session", {})
-			if new_session is Dictionary:
-				session = new_session
-				session_changed.emit(session)
-				if bool(session.get("sharing", false)):
-					_send("/models", HTTPClient.METHOD_GET, {}, "models", 75.0)
-				else:
-					models = []
-					models_changed.emit(models)
+		"signin":
+			if not bool(data.get("started", false)):
+				_finish_auth()
+				sign_in_failed.emit("Не удалось начать авторизацию через ChatGPT.")
+				return
+			_auth_timer.start()
+			auth_progress.emit("waiting_browser", 0)
+		"auth_status":
+			_auth_poll_inflight = false
+			var auth: Variant = data.get("auth", {})
+			if not (auth is Dictionary):
+				_finish_auth()
+				sign_in_failed.emit("Не получен статус авторизации.")
+				return
+			var phase := str(auth.get("phase", "waiting_browser"))
+			var elapsed := maxi(0, int((Time.get_ticks_msec() - _auth_started_ticks) / 1000))
+			if phase == "connected":
+				_finish_auth()
+				_accept_session(data.get("session", {}))
+			elif phase == "failed":
+				_finish_auth()
+				var issue: Variant = auth.get("error", {})
+				var message := "Авторизация не завершена."
+				if issue is Dictionary:
+					message = str(issue.get("error", message))
+				sign_in_failed.emit(message)
+			elif phase == "cancelling":
+				auth_progress.emit(phase, elapsed)
+			elif elapsed > 615:
+				_finish_auth()
+				sign_in_failed.emit("Превышено время ожидания входа. Повторите процедуру на этом компьютере.")
+			else:
+				auth_progress.emit(phase, elapsed)
+		"session", "disconnect":
+			_accept_session(data.get("session", {}))
 		"models":
 			var values: Variant = data.get("models", [])
 			if values is Array:
