@@ -589,20 +589,121 @@ func _check_actions(project: Dictionary) -> void:
 
 func _show_accounts() -> void:
 	_clear_page("GitHub-аккаунты")
-	_add_note(body, "Добавляйте только аккаунты, которыми имеете право пользоваться. Авторизация выполняется официальной утилитой gh; токены Builder не читает и не хранит.")
-	var form := _panel()
-	_add_note(form, "Подключение учётной записи", Color("#71c4ff"))
-	_add_note(form, "Сначала в терминале выполните: gh auth login -h github.com")
-	var login := _field(form, "GitHub username", "username")
-	_add_button(form, "Добавить в Builder", func(): _add_account(login.text))
-	for account in config["accounts"]:
-		var row := _panel()
-		_add_note(row, "@" + str(account), Color("#e9f0fc"))
-		var button_row := HBoxContainer.new()
-		row.add_child(button_row)
-		_add_button(button_row, "Активировать в gh", func(): _activate_account(str(account)))
-		_add_button(button_row, "Убрать из списка", func(): _remove_account(str(account)))
-	_add_note(body, "Внимание: gh auth switch меняет активную учётную запись GitHub CLI для github.com на этом компьютере. Это не меняет владельца и лимиты существующего репозитория.")
+	var welcome := _panel()
+	var header := _add_note(welcome, "GitHub без токенов и сложных настроек", UI.TEXT)
+	UI.label(header, 21)
+	_add_note(welcome, "Авторизация выполняется официальной программой gh. Builder не запрашивает и не сохраняет пароль или токены GitHub.", UI.MUTED)
+	var actions := HFlowContainer.new()
+	actions.add_theme_constant_override("h_separation", 10)
+	welcome.add_child(actions)
+	UI.accent(_add_button(actions, "Войти через GitHub", _start_github_login))
+	_add_button(actions, "Проверить подключение", _refresh_github_accounts)
+	var current := _detect_github_accounts()
+	var status := _panel()
+	_add_note(status, "ТЕКУЩЕЕ ПОДКЛЮЧЕНИЕ", UI.ACCENT_HOVER)
+	var active := str(config.get("active_account", ""))
+	if current.is_empty():
+		_add_note(status, "Аккаунт пока не обнаружен. Нажмите «Войти через GitHub» и пройдите авторизацию в терминале/браузере.", UI.MUTED)
+	else:
+		var title := _add_note(status, "✓  @" + current + " — подключён", UI.GOOD)
+		UI.label(title, 20)
+		_add_button(status, "Перейти к репозиториям →", _show_catalog)
+	var available: Array = config.get("accounts", [])
+	if not available.is_empty():
+		var accounts := _panel()
+		_add_note(accounts, "ПОДКЛЮЧЁННЫЕ АККАУНТЫ", UI.ACCENT_HOVER)
+		for username in available:
+			var account := str(username)
+			var account_row := HBoxContainer.new()
+			accounts.add_child(account_row)
+			var label := _add_note(account_row, "●  @" + account + ("  · активен" if account == active else ""), UI.TEXT)
+			label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			if account != active:
+				_add_button(account_row, "Переключить", func(): _activate_account(account))
+			_add_button(account_row, "Отключить", func(): _confirm_github_logout(account))
+	var help := _panel()
+	_add_note(help, "НЕ ОТКРЫВАЕТСЯ ВХОД?", UI.ACCENT_HOVER)
+	_add_note(help, "В терминале запустите команду ниже — она открывает официальный браузер GitHub. Затем вернитесь в Builder и нажмите «Проверить подключение».", UI.MUTED)
+	_add_note(help, "gh auth login --hostname github.com --web --git-protocol https", UI.TEXT)
+	_add_button(help, "Копировать команду", func():
+		DisplayServer.clipboard_set("gh auth login --hostname github.com --web --git-protocol https")
+		_message("Команда авторизации скопирована.")
+	)
+
+
+func _detect_github_accounts() -> String:
+	var result: Dictionary = CLI.run(_gh(), ["auth", "status", "--json", "hosts"])
+	if result["ok"]:
+		var data: Variant = JSON.parse_string(str(result["output"]))
+		if data is Dictionary:
+			var hosts: Variant = data.get("hosts", {})
+			if hosts is Dictionary:
+				var accounts: Variant = hosts.get("github.com", [])
+				if accounts is Array:
+					for record in accounts:
+						if record is Dictionary:
+							var login := str(record.get("login", ""))
+							if CLI.valid_login(login) and not config["accounts"].has(login):
+								config["accounts"].append(login)
+	var active_result: Dictionary = CLI.run(_gh(), ["api", "user", "--jq", ".login"])
+	if active_result["ok"]:
+		var active := str(active_result["output"]).strip_edges()
+		if CLI.valid_login(active):
+			config["active_account"] = active
+			if not config["accounts"].has(active):
+				config["accounts"].append(active)
+			_save()
+			return active
+	return ""
+
+
+func _refresh_github_accounts() -> void:
+	_show_accounts()
+	if str(config.get("active_account", "")).is_empty():
+		_message("GitHub ещё не подключён. Завершите вход в браузере и повторите проверку.", true)
+	else:
+		_message("Аккаунт GitHub обнаружен: @" + str(config["active_account"]))
+
+
+func _start_github_login() -> void:
+	var command := "gh auth login --hostname github.com --web --git-protocol https"
+	DisplayServer.clipboard_set(command)
+	var pid := -1
+	match OS.get_name():
+		"macOS":
+			# Open an interactive terminal: gh shows the GitHub device code there.
+			pid = OS.create_process("osascript", ["-e", "tell application \"Terminal\" to do script \"" + command + "\""])
+		"Windows":
+			pid = OS.create_process("powershell.exe", ["-NoProfile", "-Command", "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoExit','-Command','" + command + "')"])
+		"Linux", "FreeBSD", "NetBSD", "OpenBSD":
+			pid = OS.create_process("x-terminal-emulator", ["-e", "bash", "-lc", command + "; exec bash"])
+	if pid <= 0:
+		OS.shell_open("https://github.com/login/device")
+		_message("Откройте терминал и вставьте скопированную команду gh auth login. Затем нажмите «Проверить подключение».")
+	else:
+		_message("Открыт терминал GitHub CLI. Подтвердите авторизацию в браузере и затем нажмите «Проверить подключение».")
+
+
+func _confirm_github_logout(login: String) -> void:
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Отключить GitHub"
+	dialog.dialog_text = "Удалить авторизацию @" + login + " из GitHub CLI на этом компьютере? Это повлияет и на другие программы, использующие gh."
+	dialog.confirmed.connect(func():
+		var result: Dictionary = CLI.run(_gh(), ["auth", "logout", "--hostname", "github.com", "--user", login])
+		if result["ok"]:
+			config["accounts"].erase(login)
+			if config.get("active_account", "") == login:
+				config["active_account"] = ""
+			_save()
+			_show_accounts()
+			_message("Авторизация @" + login + " отключена.")
+		else:
+			_message("Ошибка выхода из GitHub CLI: " + str(result["output"]).substr(0, 240), true)
+		dialog.queue_free()
+	)
+	dialog.canceled.connect(func(): dialog.queue_free())
+	add_child(dialog)
+	dialog.popup_centered()
 
 
 func _add_account(login: String) -> void:
@@ -640,6 +741,7 @@ func _activate_account(login: String) -> void:
 	config["active_account"] = login
 	_save()
 	_message("Активирован GitHub CLI аккаунт @" + login)
+	_show_accounts()
 
 
 func _show_settings() -> void:
