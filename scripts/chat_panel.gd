@@ -468,7 +468,14 @@ func _on_siwc_session(_state: Dictionary) -> void:
 	if ai_provider == "chatgpt":
 		if str(_state.get("status", "")) == "connected":
 			auth_issue = ""
+			call_deferred("_focus_after_successful_login")
 		_set_account_ui()
+
+
+func _focus_after_successful_login() -> void:
+	if is_inside_tree() and DisplayServer.get_name() != "headless":
+		# On supported desktop platforms, bring Builder back after browser OAuth.
+		get_window().grab_focus()
 
 
 func _on_siwc_models(available: Array) -> void:
