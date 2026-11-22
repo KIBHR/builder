@@ -28,6 +28,10 @@ var local_refresh_button: Button
 var api_mode_toggle: CheckBox
 var api_credential_row: HBoxContainer
 var login_button: Button
+var setup_button: Button
+var setup_timer: Timer
+var setup_pid := -1
+var setup_start_ms := 0
 var logout_button: Button
 var account_status: Label
 var model_select: OptionButton
@@ -67,6 +71,10 @@ func _ready() -> void:
 	local_client.answered.connect(_on_answer)
 	local_client.failed.connect(_on_error)
 	local_client.connection_changed.connect(func(_connected: bool, detail: String): local_status.text = detail)
+	setup_timer = Timer.new()
+	setup_timer.wait_time = 2.0
+	setup_timer.timeout.connect(_poll_chatgpt_setup)
+	add_child(setup_timer)
 	_build_interface()
 	_update_key_label()
 	_set_account_ui()
@@ -159,6 +167,11 @@ func _build_interface() -> void:
 	login_button.text = "Продолжить с ChatGPT"
 	login_button.pressed.connect(_sign_in)
 	account_row.add_child(login_button)
+	UI.accent(login_button)
+	setup_button = Button.new()
+	setup_button.text = "Установить вход в ChatGPT"
+	setup_button.pressed.connect(_start_chatgpt_setup)
+	account_row.add_child(setup_button)
 	logout_button = Button.new()
 	logout_button.text = "Отключить аккаунт"
 	logout_button.pressed.connect(_sign_out)
@@ -266,7 +279,7 @@ func _select_provider(index: int, clear_old_chat: bool = true) -> void:
 	local_status.visible = local_row.visible
 	if next == "chatgpt":
 		provider_hint.text = "Официальный вход в ChatGPT. API-ключ не нужен, если подписка допускает использование в Builder."
-		if not siwc.is_available():
+		if not siwc.is_available() and _chatgpt_installed():
 			siwc.start(str(config.get("node_binary", "node")))
 		_on_siwc_models(siwc.models)
 	elif next == "ollama" or next == "lm_studio":
@@ -280,6 +293,46 @@ func _select_provider(index: int, clear_old_chat: bool = true) -> void:
 	_set_account_ui()
 	if clear_old_chat:
 		provider_changed.emit(next)
+
+
+func _chatgpt_installed() -> bool:
+	var sdk := ProjectSettings.globalize_path("res://third_party/siwc-devkit/packages/local/dist/index.js")
+	var keyring := ProjectSettings.globalize_path("res://bridge/node_modules/@napi-rs/keyring/package.json")
+	return FileAccess.file_exists(sdk) and FileAccess.file_exists(keyring)
+
+
+func _start_chatgpt_setup() -> void:
+	if setup_pid > 0:
+		return
+	if _chatgpt_installed():
+		siwc.start(str(config.get("node_binary", "node")))
+		_set_account_ui()
+		return
+	var installer := ProjectSettings.globalize_path("res://bridge/setup.mjs")
+	setup_pid = OS.create_process(str(config.get("node_binary", "node")), [installer])
+	if setup_pid <= 0:
+		setup_pid = -1
+		account_status.text = "Не найден Node.js. Установите Node.js 22.12+ и выполните node bridge/setup.mjs в терминале."
+		return
+	setup_start_ms = Time.get_ticks_msec()
+	setup_button.disabled = true
+	account_status.text = "Загружаются официальные компоненты входа. Это разовая установка…"
+	setup_timer.start()
+
+
+func _poll_chatgpt_setup() -> void:
+	if _chatgpt_installed():
+		setup_timer.stop()
+		setup_pid = -1
+		setup_button.disabled = false
+		account_status.text = "Компонент готов. Теперь войдите в ChatGPT."
+		siwc.start(str(config.get("node_binary", "node")))
+		_set_account_ui()
+	elif Time.get_ticks_msec() - setup_start_ms > 360_000:
+		setup_timer.stop()
+		setup_pid = -1
+		setup_button.disabled = false
+		account_status.text = "Установка не завершилась. Проверьте доступность интернета и запустите node bridge/setup.mjs в терминале для диагностики."
 
 
 func _open_local_provider_site() -> void:
@@ -310,10 +363,17 @@ func _set_api_models() -> void:
 func _set_account_ui() -> void:
 	if account_status == null:
 		return
-	login_button.disabled = api_mode or siwc.is_busy()
+	setup_button.visible = not _chatgpt_installed()
+	login_button.disabled = ai_provider != "chatgpt" or not siwc.is_available() or siwc.is_busy()
 	login_button.text = "Разрешить использование подписки" if str(siwc.session.get("status", "")) == "connected" and not bool(siwc.session.get("sharing", false)) else "Продолжить с ChatGPT"
 	logout_button.disabled = api_mode or siwc.is_busy() or siwc.session.get("status", "") != "connected"
 	if ai_provider != "chatgpt":
+		return
+	if setup_pid > 0 and not _chatgpt_installed():
+		account_status.text = "Подготавливается модуль авторизации ChatGPT. Идёт установка зависимостей…"
+		return
+	if not _chatgpt_installed():
+		account_status.text = "Нажмите «Установить вход в ChatGPT» (один раз). Требуется Node.js и интернет."
 		return
 	var state := str(siwc.session.get("status", "disconnected"))
 	var display := str(siwc.session.get("profileLabel", ""))
