@@ -21,7 +21,7 @@ var api_mode := false
 var provider_select: OptionButton
 var provider_hint: Label
 var provider_card: PanelContainer
-var account_row: HBoxContainer
+var account_row: HFlowContainer
 var local_row: HBoxContainer
 var local_status: Label
 var local_refresh_button: Button
@@ -112,6 +112,7 @@ func _make_note(parent: Node, value: String, tint: Color = Color("#acbdd3")) -> 
 func _build_interface() -> void:
 	provider_card = PanelContainer.new()
 	provider_card.add_theme_stylebox_override("panel", UI.panel(UI.SIDEBAR, 16))
+	provider_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(provider_card)
 	var connect_column := VBoxContainer.new()
 	provider_card.add_child(connect_column)
@@ -160,9 +161,9 @@ func _build_interface() -> void:
 	new_chat.pressed.connect(_new_chat)
 	toolbar.add_child(new_chat)
 
-	account_row = HBoxContainer.new()
-	account_row.add_theme_constant_override("separation", 8)
-	add_child(account_row)
+	account_row = HFlowContainer.new()
+	account_row.add_theme_constant_override("h_separation", 8)
+	connect_column.add_child(account_row)
 	login_button = Button.new()
 	login_button.text = "Продолжить с ChatGPT"
 	login_button.pressed.connect(_sign_in)
@@ -180,11 +181,11 @@ func _build_interface() -> void:
 	manage.text = "Лимиты подписки ↗"
 	manage.pressed.connect(func(): OS.shell_open("https://chatgpt.com/settings/usage"))
 	account_row.add_child(manage)
-	account_status = _make_note(self, "Подключение ChatGPT не запущено.")
+	account_status = _make_note(connect_column, "Подключение ChatGPT не запущено.")
 	api_credential_row = HBoxContainer.new()
 	api_credential_row.add_theme_constant_override("separation", 8)
 	api_credential_row.visible = false
-	add_child(api_credential_row)
+	connect_column.add_child(api_credential_row)
 	var credential_row := api_credential_row
 	credential_row.add_theme_constant_override("separation", 10)
 	key_input = LineEdit.new()
@@ -201,7 +202,7 @@ func _build_interface() -> void:
 	clear_key.text = "Сбросить ключ"
 	clear_key.pressed.connect(_clear_key)
 	credential_row.add_child(clear_key)
-	key_status = _make_note(self, "")
+	key_status = _make_note(connect_column, "")
 	key_status.visible = false
 
 	chat_scroll = ScrollContainer.new()
