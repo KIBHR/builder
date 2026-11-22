@@ -705,6 +705,9 @@ func _refresh_github_accounts() -> void:
 
 
 func _start_github_login() -> void:
+	if not github_login_poll.is_stopped():
+		_message("Вход GitHub уже запущен. Сначала завершите авторизацию в терминале.", true)
+		return
 	var executable := _gh()
 	var gh_check: Dictionary = CLI.run(executable, ["--version"])
 	if not gh_check["ok"]:
@@ -781,6 +784,9 @@ func _remove_account(login: String) -> void:
 
 
 func _activate_account(login: String) -> void:
+	if not OS.get_environment("GH_TOKEN").is_empty() or not OS.get_environment("GITHUB_TOKEN").is_empty():
+		_message("GitHub использует переменную GH_TOKEN/GITHUB_TOKEN, которая перекрывает выбранный аккаунт CLI. Уберите её из окружения Builder и перезапустите приложение.", true)
+		return
 	var result: Dictionary = CLI.run(_gh(), ["auth", "switch", "--hostname", "github.com", "--user", login])
 	if not result["ok"]:
 		_message("Не удалось активировать @" + login + ": " + str(result["output"]), true)
