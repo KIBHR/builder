@@ -13,9 +13,11 @@ var status_label: Label
 var content_scroll: ScrollContainer
 var chat_panel
 var window_mode_button: Button
-var previous_window_mode: int = Window.MODE_WINDOWED
+var fullscreen_help_dialog: AcceptDialog
+var previous_window_mode: int = DisplayServer.WINDOW_MODE_WINDOWED
 var window_restore_size := Vector2i(1180, 760)
 var window_restore_position := Vector2i(100, 100)
+var window_switch_in_progress := false
 
 
 func _ready() -> void:
@@ -488,30 +490,78 @@ func _on_ai_model_changed(model: String) -> void:
 	_save()
 
 
-func _unhandled_key_input(event: InputEvent) -> void:
+## Handle F11 globally, including when the chat input or another control has focus.
+func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F11:
 		_toggle_window_mode()
 		get_viewport().set_input_as_handled()
 
 
+func _is_fullscreen(mode: int) -> bool:
+	return mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+
+
+func _show_embedded_fullscreen_help() -> void:
+	_message("Полноэкранный режим недоступен при запуске внутри редактора. Game → ⋯ → отключите Embed Game on Next Play, затем перезапустите проект.", true)
+	if fullscreen_help_dialog == null:
+		fullscreen_help_dialog = AcceptDialog.new()
+		fullscreen_help_dialog.title = "Builder: полноэкранный режим"
+		fullscreen_help_dialog.dialog_text = "Godot не поддерживает полноэкранный режим для встроенного окна игры.\n\nОстановите Builder, откройте вкладку Game в редакторе Godot, нажмите ⋯ и отключите «Embed Game on Next Play».\n\nЗатем снова запустите проект (F5) и нажмите «На весь экран» или F11."
+		add_child(fullscreen_help_dialog)
+	fullscreen_help_dialog.popup_centered(Vector2i(540, 270))
+
+
 func _toggle_window_mode() -> void:
-	var window := get_window()
-	if window.mode == Window.MODE_FULLSCREEN or window.mode == Window.MODE_EXCLUSIVE_FULLSCREEN:
-		window.mode = previous_window_mode
-		if previous_window_mode == Window.MODE_WINDOWED:
-			window.size = window_restore_size
-			window.position = window_restore_position
+	# A game embedded into Godot's Game tab has no independent native window.
+	# Godot 4.7 silently refuses fullscreen requests in this situation.
+	if Engine.is_embedded_in_editor():
+		_show_embedded_fullscreen_help()
+		return
+	if window_switch_in_progress:
+		return
+	if DisplayServer.get_name() == "headless":
+		_message("Полноэкранный режим требует графического рабочего стола.", true)
+		return
+
+	var mode: int = DisplayServer.window_get_mode(DisplayServer.MAIN_WINDOW_ID)
+	var entering := not _is_fullscreen(mode)
+	var target: int = previous_window_mode
+	if entering:
+		previous_window_mode = mode
+		if mode == DisplayServer.WINDOW_MODE_WINDOWED:
+			window_restore_size = get_window().size
+			window_restore_position = get_window().position
+		target = DisplayServer.WINDOW_MODE_FULLSCREEN
+
+	window_switch_in_progress = true
+	window_mode_button.disabled = true
+	# Use the native main window rather than a potentially embedded subwindow.
+	DisplayServer.window_set_mode(target, DisplayServer.MAIN_WINDOW_ID)
+	# macOS performs a fullscreen Space transition asynchronously.
+	await get_tree().create_timer(1.25).timeout
+	if not is_inside_tree():
+		return
+
+	var actual: int = DisplayServer.window_get_mode(DisplayServer.MAIN_WINDOW_ID)
+	if actual == target or (entering and _is_fullscreen(actual)):
+		if not entering and target == DisplayServer.WINDOW_MODE_WINDOWED:
+			# Restoring position/size before leaving fullscreen can be discarded.
+			get_window().size = window_restore_size
+			get_window().position = window_restore_position
 	else:
-		previous_window_mode = window.mode
-		if window.mode == Window.MODE_WINDOWED:
-			window_restore_size = window.size
-			window_restore_position = window.position
-		window.mode = Window.MODE_FULLSCREEN
+		_message("Операционная система не переключила окно. Если Builder запущен из Godot, отключите Embed Game on Next Play.", true)
+	window_switch_in_progress = false
+	window_mode_button.disabled = false
 	_update_window_button()
 
 
 func _update_window_button() -> void:
 	if window_mode_button == null:
 		return
-	var mode := get_window().mode
-	window_mode_button.text = "Оконный режим  F11" if mode == Window.MODE_FULLSCREEN or mode == Window.MODE_EXCLUSIVE_FULLSCREEN else "На весь экран  F11"
+	if Engine.is_embedded_in_editor():
+		window_mode_button.text = "На весь экран  ⓘ"
+		window_mode_button.tooltip_text = "При запуске внутри редактора полноэкранный режим недоступен. Нажмите, чтобы узнать, как запустить отдельное окно."
+		return
+	var mode: int = DisplayServer.window_get_mode(DisplayServer.MAIN_WINDOW_ID)
+	window_mode_button.text = "Оконный режим  F11" if _is_fullscreen(mode) else "На весь экран  F11"
+	window_mode_button.tooltip_text = "Нажмите для переключения оконного и полноэкранного режимов (F11)."
