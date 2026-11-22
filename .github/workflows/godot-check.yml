@@ -40,6 +40,23 @@ jobs:
           if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error|Unexpected NUL character' godot-editor.log; then
             exit 1
           fi
+      - name: Print generated script UIDs
+        shell: bash
+        run: |
+          for uid in scripts/*.gd.uid; do
+            echo "$uid"
+            cat "$uid"
+            echo
+          done
+      - name: GitHub and ChatGPT auth state tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path . -s res://tests/account_auth_test.gd 2>&1 | tee godot-auth-test.log
+          grep -F 'Builder GitHub accounts and ChatGPT callback tests passed.' godot-auth-test.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script|Unicode parsing error|ERROR:' godot-auth-test.log; then
+            exit 1
+          fi
       - name: Verify tracked Godot UID files
         shell: bash
         run: |
