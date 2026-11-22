@@ -6,6 +6,7 @@ const Store = preload("res://scripts/data_store.gd")
 const CLI = preload("res://scripts/cli.gd")
 const ChatPanel = preload("res://scripts/chat_panel.gd")
 const UI = preload("res://scripts/ui_style.gd")
+const GithubAuth = preload("res://scripts/github_auth.gd")
 
 var config: Dictionary = {}
 var body: VBoxContainer
@@ -18,6 +19,10 @@ var repo_catalog: Array = []
 var repo_catalog_list: VBoxContainer
 var repo_catalog_search: LineEdit
 var clone_root_hint: Label
+var github_login_poll: Timer
+var github_accounts_before: Array = []
+var github_login_active_before := ""
+var github_login_started := 0
 var fullscreen_help_dialog: AcceptDialog
 var previous_window_mode: int = DisplayServer.WINDOW_MODE_WINDOWED
 var window_restore_size := Vector2i(1180, 760)
@@ -29,6 +34,10 @@ func _ready() -> void:
 	config = Store.read()
 	UI.apply(self)
 	_build_shell()
+	github_login_poll = Timer.new()
+	github_login_poll.wait_time = 3.0
+	github_login_poll.timeout.connect(_poll_github_login)
+	add_child(github_login_poll)
 	_show_home()
 
 
@@ -197,7 +206,14 @@ func _git() -> String:
 
 
 func _gh() -> String:
-	return str(config.get("gh_binary", "gh"))
+	var saved := str(config.get("gh_binary", "gh"))
+	if saved != "gh":
+		return saved
+	var common := ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
+	for candidate in common:
+		if FileAccess.file_exists(candidate):
+			return candidate
+	return "gh"
 
 
 func _save() -> bool:
@@ -593,11 +609,11 @@ func _show_accounts() -> void:
 	var welcome := _panel()
 	var header := _add_note(welcome, "GitHub без токенов и сложных настроек", UI.TEXT)
 	UI.label(header, 21)
-	_add_note(welcome, "Авторизация выполняется официальной программой gh. Builder не запрашивает и не сохраняет пароль или токены GitHub.", UI.MUTED)
+	_add_note(welcome, "Подключение через официальный GitHub CLI. Все уже сохранённые аккаунты остаются подключёнными. Чтобы добавить ещё один — в браузере выберите другой GitHub-аккаунт.", UI.MUTED)
 	var actions := HFlowContainer.new()
 	actions.add_theme_constant_override("h_separation", 10)
 	welcome.add_child(actions)
-	UI.accent(_add_button(actions, "Войти через GitHub", _start_github_login))
+	UI.accent(_add_button(actions, "＋  Добавить ещё аккаунт", _start_github_login))
 	_add_button(actions, "Проверить подключение", _refresh_github_accounts)
 	_add_button(actions, "Установить GitHub CLI ↗", func(): OS.shell_open("https://cli.github.com/"))
 	var current := _detect_github_accounts()
@@ -625,38 +641,59 @@ func _show_accounts() -> void:
 			_add_button(account_row, "Отключить", func(): _confirm_github_logout(account))
 	var help := _panel()
 	_add_note(help, "НЕ ОТКРЫВАЕТСЯ ВХОД?", UI.ACCENT_HOVER)
-	_add_note(help, "В терминале запустите команду ниже — она открывает официальный браузер GitHub. Затем вернитесь в Builder и нажмите «Проверить подключение».", UI.MUTED)
-	_add_note(help, "gh auth login --hostname github.com --web --git-protocol https", UI.TEXT)
+	_add_note(help, "При добавлении второго аккаунта GitHub может автоматически предложить первый. В браузере выберите «Use another account» или войдите через отдельный профиль браузера. Дождитесь сообщения об успехе в терминале, затем нажмите «Проверить подключение».", UI.MUTED)
+	_add_note(help, "gh auth login --hostname github.com --web --git-protocol https --clipboard", UI.TEXT)
 	_add_button(help, "Копировать команду", func():
-		DisplayServer.clipboard_set("gh auth login --hostname github.com --web --git-protocol https")
+		DisplayServer.clipboard_set("gh auth login --hostname github.com --web --git-protocol https --clipboard")
 		_message("Команда авторизации скопирована.")
 	)
 
 
+func _github_account_snapshot() -> Dictionary:
+	var cmd := CLI.run(_gh(), ["auth", "status", "--hostname", "github.com", "--json", "hosts"])
+	if not cmd["ok"]:
+		return {"accounts": [], "active": "", "error": "Не удалось выполнить gh auth status. Проверьте установку GitHub CLI."}
+	return GithubAuth.parse_accounts(str(cmd["output"]))
+
+
 func _detect_github_accounts() -> String:
-	var result: Dictionary = CLI.run(_gh(), ["auth", "status", "--json", "hosts"])
-	if result["ok"]:
-		var data: Variant = JSON.parse_string(str(result["output"]))
-		if data is Dictionary:
-			var hosts: Variant = data.get("hosts", {})
-			if hosts is Dictionary:
-				var accounts: Variant = hosts.get("github.com", [])
-				if accounts is Array:
-					for record in accounts:
-						if record is Dictionary:
-							var login := str(record.get("login", ""))
-							if CLI.valid_login(login) and not config["accounts"].has(login):
-								config["accounts"].append(login)
-	var active_result: Dictionary = CLI.run(_gh(), ["api", "user", "--jq", ".login"])
-	if active_result["ok"]:
-		var active := str(active_result["output"]).strip_edges()
-		if CLI.valid_login(active):
-			config["active_account"] = active
-			if not config["accounts"].has(active):
-				config["accounts"].append(active)
-			_save()
-			return active
-	return ""
+	var snapshot := _github_account_snapshot()
+	if not str(snapshot.get("error", "")).is_empty():
+		_message(str(snapshot["error"]), true)
+		return ""
+	var names: Array = snapshot.get("accounts", [])
+	var active := str(snapshot.get("active", ""))
+	config["accounts"] = names.duplicate()
+	config["active_account"] = active
+	_save()
+	return active
+
+
+func _poll_github_login() -> void:
+	if Time.get_ticks_msec() - github_login_started > 300000:
+		github_login_poll.stop()
+		_message("Ожидание входа GitHub завершено. Проверьте терминал и нажмите «Проверить подключение».", true)
+		return
+	var snapshot := _github_account_snapshot()
+	if not str(snapshot.get("error", "")).is_empty():
+		return
+	var current: Array = snapshot.get("accounts", [])
+	var active := str(snapshot.get("active", ""))
+	var is_new := false
+	for item in current:
+		if not github_accounts_before.has(item):
+			is_new = true
+			break
+	if not is_new and active == github_login_active_before:
+		return
+	github_login_poll.stop()
+	config["accounts"] = current.duplicate()
+	config["active_account"] = active
+	_save()
+	_show_accounts()
+	_message("GitHub: подключён @" + active + ". Теперь можно открыть его репозитории.")
+
+
 
 
 func _refresh_github_accounts() -> void:
@@ -668,27 +705,34 @@ func _refresh_github_accounts() -> void:
 
 
 func _start_github_login() -> void:
-	var gh_check: Dictionary = CLI.run(_gh(), ["--version"])
+	var executable := _gh()
+	var gh_check: Dictionary = CLI.run(executable, ["--version"])
 	if not gh_check["ok"]:
 		OS.shell_open("https://cli.github.com/")
-		_message("Сначала установите GitHub CLI (gh). Открыта официальная страница установки.", true)
+		_message("Не найден GitHub CLI. Установите его с открытой страницы, затем повторите вход.", true)
 		return
-	var command := "gh auth login --hostname github.com --web --git-protocol https"
-	DisplayServer.clipboard_set(command)
+	var snapshot := _github_account_snapshot()
+	github_accounts_before = snapshot.get("accounts", []).duplicate()
+	github_login_active_before = str(snapshot.get("active", ""))
+	# GitHub CLI login adds an account rather than replacing existing credentials.
+	var shell_command := "'" + executable.replace("'", "'\\''") + "' auth login --hostname github.com --web --git-protocol https --clipboard"
 	var pid := -1
 	match OS.get_name():
 		"macOS":
-			# Open an interactive terminal: gh shows the GitHub device code there.
-			pid = OS.create_process("osascript", ["-e", "tell application \"Terminal\" to do script \"" + command + "\""])
+			# macOS Terminal shows the device code and keeps the login interactive.
+			var apple_script := "tell application \"Terminal\" to do script \"" + shell_command.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+			pid = OS.create_process("osascript", ["-e", apple_script])
 		"Windows":
-			pid = OS.create_process("powershell.exe", ["-NoProfile", "-Command", "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoExit','-Command','" + command + "')"])
+			pid = OS.create_process("powershell.exe", ["-NoProfile", "-Command", "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoExit','-Command','gh auth login --hostname github.com --web --git-protocol https --clipboard')"])
 		"Linux", "FreeBSD", "NetBSD", "OpenBSD":
-			pid = OS.create_process("x-terminal-emulator", ["-e", "bash", "-lc", command + "; exec bash"])
+			pid = OS.create_process("x-terminal-emulator", ["-e", "bash", "-lc", shell_command + "; exec bash"])
 	if pid <= 0:
-		OS.shell_open("https://github.com/login/device")
-		_message("Откройте терминал и вставьте скопированную команду gh auth login. Затем нажмите «Проверить подключение».")
-	else:
-		_message("Открыт терминал GitHub CLI. Подтвердите авторизацию в браузере и затем нажмите «Проверить подключение».")
+		DisplayServer.clipboard_set("gh auth login --hostname github.com --web --git-protocol https --clipboard")
+		_message("Системный терминал не открылся. Команда GitHub скопирована: вставьте её в терминал и выберите другой аккаунт в браузере.", true)
+		return
+	github_login_started = Time.get_ticks_msec()
+	github_login_poll.start()
+	_message("Терминал GitHub открыт. Выберите НОВЫЙ аккаунт в браузере, подтвердите код. Builder проверит появление аккаунта автоматически.")
 
 
 func _confirm_github_logout(login: String) -> void:
