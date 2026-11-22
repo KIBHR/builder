@@ -1,28 +1,15 @@
 # Builder Architecture
 
-Godot 4 desktop shell
-- Projects → local Git checkout → primary GitHub origin → approved mirror remotes.
-- Accounts → GitHub CLI / credential manager (explicitly chosen user; no tokens stored).
-- Actions → GitHub REST workflow run list, not remaining-balance information.
-- ChatGPT → system browser for MVP, no cookies copied into the application.
-- Preferences → user://builder.json with nonsecret settings only.
+- **Godot desktop shell**: `scenes/main.tscn` + `scripts/workspace.gd` (Projects / Accounts / Settings / ChatGPT, F11 fullscreen button).
+- **AI chat UI**: `scripts/chat_panel.gd` (message input, model choice, selected-project context, explicit file attachment, conversation display).
+- **OpenAI API client**: `scripts/openai_client.gd` (asynchronous POST to `https://api.openai.com/v1/responses`, TLS via Godot, `store: false`, bounded input and output, session-only API key).
+- **Local config**: `scripts/data_store.gd` writes `user://builder.json` atomically without credentials, chats or attached file text.
+- **GitHub**: `scripts/cli.gd` invokes local Git / `gh` with literal argument arrays; the GitHub CLI manages login credentials.
 
-## Billing and failover
+The built-in chat deliberately uses the supported Responses API instead of copying ChatGPT browser cookies, manipulating login forms, or embedding a blocked iframe. Sign in with ChatGPT integration and access to your ChatGPT plan would require its own supported authorization and enrollment.
 
-Actions usage on private repositories belongs to the owner or organization, not to the individual who starts a workflow. Switching gh users on the same repo therefore does not change its billing allocation.
+File context is only read when explicitly selected from a registered checkout and sent when user clicks Send. Model does not have access to any other files or the ability to edit the repository.
 
-For uninterrupted CI, prefer an authorized self-hosted runner or a separately administered organization with its own billing and approved workflows. A future CI router should require explicit opt-in, equivalent secrets and permissions, commit-SHA checks, audit logs, rate limits and safe rollback. It must not silently rotate disposable personal accounts to evade limits.
+The F11 handler stores the prior Godot main Window mode, position and dimensions before entering fullscreen and restores them when leaving fullscreen.
 
-GitHub Actions allowances, OpenAI plan limits, Codex usage, GitHub Copilot quotas and GitHub API rate limits are separate concepts.
-
-## ChatGPT options
-
-The current MVP uses the browser. Native WebView in Godot is possible through GDExtension projects such as godot_wry, but third-party sign-in in embedded browsers is not guaranteed. For an app-native assistant, use the documented OpenAI Responses API or eligible Sign in with ChatGPT open-source plan-usage flow. Normal identity scopes do not grant existing ChatGPT conversation history. ChatGPT-first project controls require a separately authenticated plugin/MCP server.
-
-## Roadmap
-
-1. Asynchronous Git and GitHub worker (Rust or Go) and OS credential-store integration.
-2. Explicit multi-organization permissions and genuine usage reporting.
-3. Safely controlled CI backend selection with self-hosted fallback.
-4. OpenAI integration and optional native WebView.
-5. Tested, signed Windows/macOS/Linux installers.
+Actions billing attaches to repository owners, not individual trigger users. Future CI continuity may use authorized self-hosted runners; bypassing limits by switching disposable accounts is unsupported.
