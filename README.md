@@ -1,42 +1,42 @@
 # Builder — AI Development Workspace
 
-A local-first desktop workspace built with **Godot 4.2+** to manage GitHub repositories, authorized accounts, Git mirrors and CI run status.
+Godot 4.2+ desktop workspace for managing GitHub projects with **native in-app AI chat** via the official [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create).
 
-**Status: early MVP.** This is a Godot project, not a packaged installer. Native ChatGPT embedding, OAuth onboarding, billing quota metrics and automatic CI failover are not yet implemented.
+**Status:** development MVP. A signed installer and live API acceptance testing are still pending.
 
-## Run locally
+## What's included
 
-1. Install Godot 4.2+, Git and GitHub CLI (gh).
-2. In a terminal run: gh auth login -h github.com. Repeat for accounts you are authorized to use.
-3. Open project.godot in Godot and run the project (F5).
-4. In Settings provide absolute paths to Git / gh if the GUI environment does not contain them in PATH.
-5. Add GitHub usernames in Accounts and explicitly activate one with gh auth switch.
-6. Add projects: primary repo owner/repo, absolute checkout directory, branch, and optional mirrors owner/repo.
-7. Clone, fetch, inspect the latest Actions run or push the configured branch to mirrors after confirmation.
+- GitHub CLI accounts, Git clone/fetch, a GitHub Actions latest-run status view and explicit, non-force mirror branch push.
+- **ChatGPT · в Builder**: conversation interface, configurable OpenAI model, in-memory multi-turn history, attach one chosen project source file (48 KiB max), copy latest assistant answer, cancel/clear conversation.
+- **Windowed / fullscreen**: upper-right mode button, or **F11**. The app restores the previous non-fullscreen window mode, including size/position.
+- Russian-language interface.
 
-The app does not accept or persist GitHub tokens, passwords or ChatGPT cookies. GitHub authentication uses gh credential storage; HTTP Git pushes depend on existing Git credential configuration (e.g. gh auth setup-git).
+## Running
 
-## MVP features
+1. Install **Godot 4.2+**, Git and [GitHub CLI](https://cli.github.com/).
+2. Import `project.godot` into Godot and run (F5).
+3. For GitHub access, run `gh auth login -h github.com` and optionally `gh auth setup-git` in a terminal.
+4. For native AI chat, create an **OpenAI Platform API key**. Either set `OPENAI_API_KEY` before starting Builder or paste it into **ChatGPT · в Builder → Подключить**. The key is held in process memory only and is not saved in the project or settings.
+5. Select a model: `gpt-6.2-sol` (default), `gpt-6-luna`, `gpt-6.2-astra`, or `gpt-5.4-mini` (subject to your account availability). Type a message, click **Отправить** or press **Ctrl+Enter** / **Cmd+Enter**.
+6. Optionally select a registered project. The repo name and branch are included in system context; only specifically attached source files are included in the message body. No automatic repository access or code editing is performed.
+7. Toggle fullscreen with the header button or **F11**.
 
-- Russian-language Godot desktop interface, locally saved project/account references.
-- GitHub CLI account switching, checked against gh api user.
-- Git clone and non-destructive fetch.
-- Verified-origin, clean-worktree, exact-commit checks before a **non-force**, explicitly approved mirror push. Divergent mirror branches are rejected.
-- Latest GitHub Actions run state (not an account quota measure).
-- Open ChatGPT in the system browser.
-- Configurable paths for Git and gh.
+## ChatGPT API vs ChatGPT website
 
-## Limitations
+**Important:** The built-in panel uses the official OpenAI **API**, not an embedded copy of the chatgpt.com website. ChatGPT Plus/Pro subscriptions and API billing are separate. Your ChatGPT.com login/history is not shared with Builder. A separate commercial **Sign in with ChatGPT** integration would require the supported developer flow and eligibility; it is not implemented. The side link still opens the ChatGPT website externally.
 
-- Operations run synchronously and may block the UI. A production release should use background workers.
-- Mirroring copies a single selected Git branch. It does **not** clone GitHub issues, PRs, workflow history, branch protections or repository secrets.
-- Pushes to mirrors can trigger workflows and incur GitHub Actions usage.
-- ChatGPT is currently a browser shortcut, not an embedded authenticated chat or a plugin controlling Builder.
-- **Switching GitHub users cannot refill the billing owner's exhausted Actions quota.** GitHub bills Actions usage to the repository owner. Avoid maintaining multiple free personal accounts to work around service limits.
-- This project has not been compiled or smoke-tested in Godot in the authoring environment.
+## Privacy
 
-See ARCHITECTURE.md and SECURITY.md for the supported design and next steps.
+- Only the requested message, up to ten prior chat messages, any explicitly attached text file (max 48 KiB), and the chosen repo name/branch go to OpenAI via HTTPS.
+- `store: false` is sent in each Responses request. Provider-side retention terms still apply.
+- Chat messages, API key and attached contents stay only in **RAM**; **Новый чат** clears memory history, and quitting Builder discards it.
+- `user://builder.json` stores nonsecret GitHub/project metadata and selected model, **never secrets**.
+- GitHub CLI handles its own credentials.
 
-## Planned
+## Boundaries and status
 
-Async native sidecar for Git/GitHub API calls, properly scoped OAuth, signed installers, CI usage visibility with owner permissions, optional self-hosted runner fallback, native WebView experimentation, and authorized ChatGPT Responses API / open-source Sign in with ChatGPT or a plugin/MCP integration.
+GitHub Actions usage is billed to repository owners; switching logged-in GitHub accounts cannot refill an exhausted owner's quota. Mirror pushes may trigger CI and affect usage. No automatic quota circumvention is implemented.
+
+Godot scripts must still pass CI and manual cross-platform testing before considering this production-ready. Git CLI operations are synchronous in the current MVP; OpenAI HTTP calls are asynchronous.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md).
