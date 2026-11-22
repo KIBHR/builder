@@ -389,10 +389,13 @@ func _attach_file(path: String) -> void:
 	if file.get_length() > MAX_FILE_SIZE:
 		file_label.text = "Файл больше 48 КБ. Выберите меньший."
 		return
-	var content := file.get_as_text()
-	if content.contains("\u0000"):
+	# Godot Strings cannot contain NUL. Scan raw bytes BEFORE UTF-8 conversion:
+	# a "\u0000" literal itself triggers editor Unicode parsing errors.
+	var raw_bytes: PackedByteArray = file.get_buffer(file.get_length())
+	if raw_bytes.has(0):
 		file_label.text = "Двоичный файл не поддерживается"
 		return
+	var content := raw_bytes.get_string_from_utf8()
 	selected_file_name = normalized.trim_prefix(root)
 	selected_file_text = content
 	file_label.text = "Добавлен: " + selected_file_name
