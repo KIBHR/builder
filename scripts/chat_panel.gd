@@ -36,6 +36,7 @@ var logout_button: Button
 var account_status: Label
 var auth_issue := ""
 var auth_status_button: Button
+var cancel_login_button: Button
 var model_select: OptionButton
 var project_select: OptionButton
 var key_input: LineEdit
@@ -177,6 +178,11 @@ func _build_interface() -> void:
 	auth_status_button.text = "Проверить состояние"
 	auth_status_button.pressed.connect(_refresh_auth_status)
 	account_row.add_child(auth_status_button)
+	cancel_login_button = Button.new()
+	cancel_login_button.text = "Отменить вход"
+	cancel_login_button.pressed.connect(_cancel_siwc_login)
+	cancel_login_button.visible = false
+	account_row.add_child(cancel_login_button)
 	setup_button = Button.new()
 	setup_button.text = "Установить вход в ChatGPT"
 	setup_button.pressed.connect(_start_chatgpt_setup)
@@ -375,6 +381,7 @@ func _set_account_ui() -> void:
 	setup_button.visible = not _chatgpt_installed()
 	login_button.disabled = ai_provider != "chatgpt" or not siwc.is_available() or siwc.is_busy()
 	auth_status_button.disabled = ai_provider != "chatgpt" or not siwc.is_available()
+	cancel_login_button.visible = ai_provider == "chatgpt" and siwc.is_signing_in()
 	login_button.text = "Разрешить использование подписки" if str(siwc.session.get("status", "")) == "connected" and not bool(siwc.session.get("sharing", false)) else "Продолжить с ChatGPT"
 	logout_button.disabled = api_mode or siwc.is_busy() or siwc.session.get("status", "") != "connected"
 	if ai_provider != "chatgpt":
@@ -418,6 +425,12 @@ func _sign_in() -> void:
 	account_status.text = "Откройте браузер и подтвердите вход в ChatGPT."
 
 
+func _cancel_siwc_login() -> void:
+	if siwc.is_signing_in():
+		siwc.cancel()
+		account_status.text = "Отменяю вход…"
+
+
 func _refresh_auth_status() -> void:
 	auth_issue = ""
 	siwc.refresh()
@@ -427,6 +440,7 @@ func _refresh_auth_status() -> void:
 func _on_auth_progress(phase: String, seconds: int) -> void:
 	if ai_provider != "chatgpt":
 		return
+	cancel_login_button.visible = siwc.is_signing_in()
 	if phase == "starting":
 		account_status.text = "Готовлю безопасное подключение к OpenAI…"
 	elif phase == "cancelling":
