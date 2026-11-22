@@ -442,24 +442,27 @@ func _show_settings() -> void:
 	_add_note(form, "Исполняемые файлы", Color("#71c4ff"))
 	var git := _field(form, "Git", "git или полный путь", _git())
 	var gh := _field(form, "GitHub CLI", "gh или полный путь", _gh())
-	_add_button(form, "Сохранить настройки", func(): _save_tools(git.text, gh.text))
+	var node := _field(form, "Node.js для ChatGPT", "node или полный путь", str(config.get("node_binary", "node")))
+	_add_button(form, "Сохранить настройки", func(): _save_tools(git.text, gh.text, node.text))
 	_add_button(form, "Проверить инструменты", func(): _check_tools())
 	var panel := _panel()
 	_add_note(panel, "Интеграции", Color("#71c4ff"))
-	_add_note(panel, "ChatGPT: встроенная панель использует официальный OpenAI Responses API. Ключ из OPENAI_API_KEY или вводится на странице ChatGPT только на текущий запуск. Подписка ChatGPT и API оплачиваются отдельно.")
-	_add_note(panel, "Встроенный ChatGPT Web с входом в подписку не реализован: его нельзя надёжно заменить обычным iframe. Доступ к переписке веб-ChatGPT через API отсутствует.")
+	_add_note(panel, "ChatGPT: реализован официальный Sign in with ChatGPT для локальных open-source приложений. Нужна однократная установка DevKit: node bridge/setup.mjs, затем вход в официальном браузере. Использование подписки возможно при наличии соответствующего разрешения и подходящего плана.")
+	_add_note(panel, "Ключ API не требуется в режиме «Продолжить с ChatGPT». Опциональный режим OpenAI API оставлен в качестве совместимости; его оплата отдельная.")
+	_add_note(panel, "Вход через ChatGPT не даёт доступ к истории разговоров сайта chatgpt.com. Пароли и cookies приложение не собирает.")
 	_add_note(panel, "Полноэкранный режим: кнопка в шапке приложения или F11. Возврат — повторное нажатие.")
 	_add_note(panel, "GitHub Actions: приложение показывает последний запуск, но не заявляет о наличии несуществующего публичного API для остатка минут каждого пользователя.")
 	_add_note(panel, "Автоматическая смена плательщика/репозитория при исчерпании квоты отключена. Для непрерывного CI предпочтительны собственные runners или согласованные организации с независимой оплатой.")
 	_add_note(panel, "Локальный файл конфигурации: " + ProjectSettings.globalize_path(Store.CONFIG_PATH))
 
 
-func _save_tools(git: String, gh: String) -> void:
-	if git.strip_edges().is_empty() or gh.strip_edges().is_empty():
-		_message("Заполните оба пути.", true)
+func _save_tools(git: String, gh: String, node: String) -> void:
+	if git.strip_edges().is_empty() or gh.strip_edges().is_empty() or node.strip_edges().is_empty():
+		_message("Заполните все пути.", true)
 		return
 	config["git_binary"] = git.strip_edges()
 	config["gh_binary"] = gh.strip_edges()
+	config["node_binary"] = node.strip_edges()
 	if _save():
 		_message("Пути к инструментам сохранены.")
 
