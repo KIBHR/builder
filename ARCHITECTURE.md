@@ -1,15 +1,28 @@
-# Builder Architecture
+# Архитектура Builder
 
-- **Godot desktop shell**: `scenes/main.tscn` + `scripts/workspace.gd` (Projects / Accounts / Settings / ChatGPT, F11 fullscreen button).
-- **AI chat UI**: `scripts/chat_panel.gd` (message input, model choice, selected-project context, explicit file attachment, conversation display).
-- **OpenAI API client**: `scripts/openai_client.gd` (asynchronous POST to `https://api.openai.com/v1/responses`, TLS via Godot, `store: false`, bounded input and output, session-only API key).
-- **Local config**: `scripts/data_store.gd` writes `user://builder.json` atomically without credentials, chats or attached file text.
-- **GitHub**: `scripts/cli.gd` invokes local Git / `gh` with literal argument arrays; the GitHub CLI manages login credentials.
+## Godot 4 frontend
 
-The built-in chat deliberately uses the supported Responses API instead of copying ChatGPT browser cookies, manipulating login forms, or embedding a blocked iframe. Sign in with ChatGPT integration and access to your ChatGPT plan would require its own supported authorization and enrollment.
+- `scenes/main.tscn`, `scripts/workspace.gd`: GitHub projects, accounts, settings, F11 fullscreen.
+- `scripts/chat_panel.gd`: conversational UI; primary **Continue with ChatGPT** button, explicit consent status, dynamic models, new chat, cancel, optional API-key compatibility mode.
+- `scripts/siwc_client.gd`: start/stop isolated local Node bridge, authenticated HTTP over 127.0.0.1, OAuth state, prompts and model catalog.
+- `scripts/openai_client.gd`: optional separately billed OpenAI Platform API fallback.
 
-File context is only read when explicitly selected from a registered checkout and sent when user clicks Send. Model does not have access to any other files or the ability to edit the repository.
+## Official OpenAI Sign in with ChatGPT
 
-The F11 handler stores the prior Godot main Window mode, position and dimensions before entering fullscreen and restores them when leaving fullscreen.
+- `bridge/setup.mjs` clones a **pinned** version of [OpenAI Sign in with ChatGPT DevKit](https://github.com/openai/sign-in-with-chatgpt-devkit) and builds `@siwc/local`, then installs local keyring bindings.
+- `bridge/server.mjs` wraps official `createChatGPT({ appName: "Builder", appId: "kibhr-builder", sendHostId: true, ... })` in a **localhost-only** backend. The SDK handles dynamic OAuth client registration, browser authorization, PKCE, verified ID tokens, plan scopes, refresh and Responses API requests.
+- OAuth credentials reside only in the local Node process and the SDK's encrypted profile store, with the AES-GCM key protected by the OS keyring. Godot sees only connection state, identity display, available model slugs, and explicitly requested response text.
+- Only sessions with the granted `chatgpt.tokens.use.direct` scope can make subscription-backed requests; otherwise UI shows that more permission is needed. Explicit reconsent is supported.
+- The browser used to authenticate is the default OS browser, not a Godot WebView or an embedded ChatGPT webpage.
+- The SDK's license is **noncommercial** and separate from the Builder repository's license; use of this integration must comply with its terms.
+- SIWC does not grant access to the account's chatgpt.com conversation history.
 
-Actions billing attaches to repository owners, not individual trigger users. Future CI continuity may use authorized self-hosted runners; bypassing limits by switching disposable accounts is unsupported.
+## Transport
+
+Godot starts a Node.js sidecar with the current user's absolute `user://siwc` directory. The bridge binds a random ephemeral port to **127.0.0.1** and writes a 0600-protected handshake file with PID, port and random shared secret. Godot reads it, removes the file, and uses the secret for authenticated loopback calls. Requests with browser Origin headers are rejected and cross-origin access is not enabled. No backend is deployed and no tokens are shared across users.
+
+Godot calls: `GET /session`, `GET /models`, `POST /signin`, `POST /disconnect`, `POST /chat`, `POST /cancel`, `GET /health`. Only user activity triggers inference. Local sidecar exits on app close or after idle timeout.
+
+## Existing GitHub integration
+
+Git and GitHub CLI operations are separate; account switching there never changes repository-owner Actions billing. Mirror pushes remain opt-in and non-force. Background CI-account rotation is not implemented.
