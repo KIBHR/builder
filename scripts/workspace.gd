@@ -5,6 +5,7 @@ extends Control
 const Store = preload("res://scripts/data_store.gd")
 const CLI = preload("res://scripts/cli.gd")
 const ChatPanel = preload("res://scripts/chat_panel.gd")
+const UI = preload("res://scripts/ui_style.gd")
 
 var config: Dictionary = {}
 var body: VBoxContainer
@@ -13,6 +14,10 @@ var status_label: Label
 var content_scroll: ScrollContainer
 var chat_panel
 var window_mode_button: Button
+var repo_catalog: Array = []
+var repo_catalog_list: VBoxContainer
+var repo_catalog_search: LineEdit
+var clone_root_hint: Label
 var fullscreen_help_dialog: AcceptDialog
 var previous_window_mode: int = DisplayServer.WINDOW_MODE_WINDOWED
 var window_restore_size := Vector2i(1180, 760)
@@ -22,17 +27,18 @@ var window_switch_in_progress := false
 
 func _ready() -> void:
 	config = Store.read()
+	UI.apply(self)
 	_build_shell()
-	_show_projects()
+	_show_home()
 
 
 func _build_shell() -> void:
-	var base := Color("#101827")
-	var surface := Color("#1a2538")
-	var text_color := Color("#e9f0fc")
+	var base := UI.BACKGROUND
+	var surface := UI.SIDEBAR
+	var text_color := UI.TEXT
 	var root := HBoxContainer.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("separation", 16)
+	root.add_theme_constant_override("separation", 20)
 	add_child(root)
 
 	var background := ColorRect.new()
@@ -43,38 +49,44 @@ func _build_shell() -> void:
 	move_child(background, 0)
 
 	var sidebar := PanelContainer.new()
-	sidebar.custom_minimum_size = Vector2(245, 0)
-	var side_style := StyleBoxFlat.new()
-	side_style.bg_color = surface
-	side_style.set_content_margin_all(18)
+	sidebar.custom_minimum_size = Vector2(255, 0)
+	var side_style := UI.panel(surface, 0, false)
+	side_style.set_content_margin_all(20)
 	sidebar.add_theme_stylebox_override("panel", side_style)
 	root.add_child(sidebar)
 	var menu := VBoxContainer.new()
-	menu.add_theme_constant_override("separation", 12)
+	menu.add_theme_constant_override("separation", 10)
 	sidebar.add_child(menu)
 	var brand := Label.new()
-	brand.text = "BUILDER"
-	brand.add_theme_font_size_override("font_size", 27)
-	brand.add_theme_color_override("font_color", Color("#71c4ff"))
+	brand.text = "◈  BUILDER"
+	brand.add_theme_font_size_override("font_size", 25)
+	brand.add_theme_color_override("font_color", Color("#A49CFF"))
 	menu.add_child(brand)
-	_add_note(menu, "AI DEVELOPMENT WORKSPACE", Color("#98a7ba"))
+	_add_note(menu, "GITHUB  +  AI WORKSPACE", UI.MUTED)
 	menu.add_child(HSeparator.new())
-	_add_button(menu, "Репозитории", Callable(self, "_show_projects"))
-	_add_button(menu, "ChatGPT · в Builder", Callable(self, "_show_chat"))
-	_add_button(menu, "GitHub-аккаунты", Callable(self, "_show_accounts"))
-	_add_button(menu, "Настройки", Callable(self, "_show_settings"))
+	_add_note(menu, "РАБОЧЕЕ ПРОСТРАНСТВО", UI.MUTED)
+	UI.subtle(_add_button(menu, "⌂   Главная", Callable(self, "_show_home")))
+	UI.subtle(_add_button(menu, "▦   Мои проекты", Callable(self, "_show_projects")))
+	UI.subtle(_add_button(menu, "↓   Загрузить из GitHub", Callable(self, "_show_catalog")))
+	UI.subtle(_add_button(menu, "✦   ИИ-помощник", Callable(self, "_show_chat")))
+	menu.add_child(HSeparator.new())
+	_add_note(menu, "ПОДКЛЮЧЕНИЯ", UI.MUTED)
+	UI.subtle(_add_button(menu, "⌘   GitHub-аккаунты", Callable(self, "_show_accounts")))
+	UI.subtle(_add_button(menu, "⚙   Настройки", Callable(self, "_show_settings")))
 	var push_down := Control.new()
 	push_down.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	menu.add_child(push_down)
-	_add_button(menu, "ChatGPT.com ↗", func(): OS.shell_open("https://chatgpt.com/"))
-	_add_note(menu, "Встроенный чат использует OpenAI API.\nВеб-версия открывается отдельно.", Color("#98a7ba"))
+	_add_note(menu, "Все проекты и настройки — на вашем устройстве.", UI.MUTED)
+	UI.subtle(_add_button(menu, "↗   ChatGPT.com", func(): OS.shell_open("https://chatgpt.com/")))
+	var exit_button := _add_button(menu, "⎋   Выйти из Builder", func(): get_tree().quit())
+	UI.subtle(exit_button)
 
 	var main := VBoxContainer.new()
 	main.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	main.add_theme_constant_override("separation", 10)
 	root.add_child(main)
 	var top := MarginContainer.new()
-	top.add_theme_constant_override("margin_top", 20)
+	top.add_theme_constant_override("margin_top", 24)
 	top.add_theme_constant_override("margin_right", 22)
 	main.add_child(top)
 	var header_row := HBoxContainer.new()
@@ -83,7 +95,7 @@ func _build_shell() -> void:
 	heading = Label.new()
 	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	heading.add_theme_color_override("font_color", text_color)
-	heading.add_theme_font_size_override("font_size", 28)
+	heading.add_theme_font_size_override("font_size", 30)
 	header_row.add_child(heading)
 	window_mode_button = Button.new()
 	window_mode_button.custom_minimum_size = Vector2(185, 38)
@@ -114,7 +126,7 @@ func _build_shell() -> void:
 	status_label = Label.new()
 	status_label.text = "Готово. Для приватных репозиториев выполните gh auth login в терминале."
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	status_label.add_theme_color_override("font_color", Color("#a4c7de"))
+	status_label.add_theme_color_override("font_color", UI.MUTED)
 	var footer := MarginContainer.new()
 	footer.add_theme_constant_override("margin_right", 22)
 	footer.add_theme_constant_override("margin_bottom", 14)
@@ -165,10 +177,7 @@ func _field(parent: VBoxContainer, title: String, hint: String, initial: String 
 func _panel() -> VBoxContainer:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#1b293c")
-	style.set_content_margin_all(16)
-	style.set_corner_radius_all(8)
+	var style := UI.panel(UI.SURFACE, 16)
 	panel.add_theme_stylebox_override("panel", style)
 	body.add_child(panel)
 	var inner := VBoxContainer.new()
