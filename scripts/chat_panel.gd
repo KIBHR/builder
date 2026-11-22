@@ -189,7 +189,7 @@ func _build_interface() -> void:
 	cancel_button = Button.new()
 	cancel_button.text = "Отмена"
 	cancel_button.disabled = true
-	cancel_button.pressed.connect(func(): client.cancel())
+	cancel_button.pressed.connect(_cancel_active_request)
 	actions.add_child(cancel_button)
 	var copy_button := Button.new()
 	copy_button.text = "Копировать ответ"
@@ -223,6 +223,7 @@ func _set_account_ui() -> void:
 	if account_status == null:
 		return
 	login_button.disabled = api_mode or siwc.is_busy()
+	login_button.text = "Разрешить использование подписки" if str(siwc.session.get("status", "")) == "connected" and not bool(siwc.session.get("sharing", false)) else "Продолжить с ChatGPT"
 	logout_button.disabled = api_mode or siwc.is_busy() or siwc.session.get("status", "") != "connected"
 	if api_mode:
 		account_status.text = "Режим OpenAI API включён. Вход через ChatGPT не требуется."
@@ -248,8 +249,16 @@ func _sign_in() -> void:
 	if api_mode:
 		return
 	_new_chat()
-	siwc.sign_in()
+	var need_consent := str(siwc.session.get("status", "")) == "connected" and not bool(siwc.session.get("sharing", false))
+	siwc.sign_in(need_consent)
 	account_status.text = "Откройте браузер и подтвердите вход в ChatGPT."
+
+
+func _cancel_active_request() -> void:
+	if api_mode:
+		client.cancel()
+	else:
+		siwc.cancel()
 
 
 func _sign_out() -> void:
