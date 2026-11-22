@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // One-time setup for the official OpenAI SIWC DevKit (not checked into Builder).
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -34,4 +34,10 @@ if (!existsSync(sdkOutput)) {
   run("npm", ["run", "build", "--workspace", "@siwc/local"], devkitDir);
 }
 run("npm", ["install", "--no-audit", "--no-fund"], bridgeDir);
+// Godot scans the project directory recursively; native .node binary modules
+// must not be treated as editor assets. Keep them available to Node at runtime.
+const modulesDir = resolve(bridgeDir, "node_modules");
+if (existsSync(modulesDir)) {
+  writeFileSync(resolve(modulesDir, ".gdignore"), "");
+}
 process.stdout.write("\nBuilder SIWC bridge installed. Open Godot and choose 'Продолжить с ChatGPT'.\n");
