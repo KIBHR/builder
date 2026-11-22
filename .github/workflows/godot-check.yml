@@ -1,0 +1,43 @@
+name: Godot syntax and startup smoke test
+
+on:
+  push:
+    branches: [main, feature/godot-workspace-mvp]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  godot-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official Godot editor
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 15 \
+            -o /tmp/godot.zip \
+            https://github.com/godotengine/godot-builds/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip
+          mkdir -p /tmp/godot
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.4.1-stable_linux.x86_64
+      - name: Import and parse scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.4.1-stable_linux.x86_64 --headless --editor --path . --quit 2>&1 | tee godot-editor.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script' godot-editor.log; then
+            exit 1
+          fi
+      - name: Headless application startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/godot/Godot_v4.4.1-stable_linux.x86_64 --headless --path . --quit-after 3 2>&1 | tee godot-app.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script' godot-app.log; then
+            exit 1
+          fi
