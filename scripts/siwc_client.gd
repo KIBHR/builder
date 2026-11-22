@@ -84,7 +84,7 @@ func sign_in(reconsent: bool = false) -> void:
 	_send("/signin", HTTPClient.METHOD_POST, {"reconsent": reconsent}, "signin", 650.0)
 
 
-func disconnect() -> void:
+func disconnect_account() -> void:
 	if _connected and not is_busy():
 		_send("/disconnect", HTTPClient.METHOD_POST, {}, "disconnect")
 
