@@ -1,12 +1,10 @@
-# Security
+# Security and privacy
 
-- No GitHub passwords, personal access tokens, OAuth secrets or ChatGPT cookies are accepted or saved.
-- GitHub CLI manages authorization. Switching users changes the globally selected gh login on this machine.
-- Git is invoked with OS.execute and literal argument arrays, without a command shell.
-- The local configuration file stores only usernames, remote names, filesystem paths and executable paths.
-- The mirror operation requires confirmation; before push it validates the primary origin, requires a clean checkout and exact local/origin branch SHAs.
-- Git pushes never use --force and only target explicitly configured mirrors. A non-fast-forward mirror fails rather than being overwritten.
-- Mirrored Actions workflows may have separate secrets, deploy permissions and billing effects. Administer mirrors independently.
-- Do not commit local checkouts, credential files, private source or local configuration.
-- In a production worker implement process timeouts, cancellation, output filtering, background execution, per-repository authentication isolation and audit logging.
-- Automatic quota circumvention or use of unauthorized identities is not a supported workflow.
+- Never commit GitHub/OpenAI tokens, ChatGPT cookies, private repo source, local config, or secrets to the repo.
+- The OpenAI key is read from `OPENAI_API_KEY` or a masked input for the **current process**; it is not written to settings, chat history or logs.
+- HTTPS requests go to the fixed `https://api.openai.com/v1/responses` endpoint; credentials are not sent to any custom endpoint.
+- Requests are user-triggered. Only an explicitly chosen file (up to 48 KiB, limited text extensions) can be attached; review for private data before sending.
+- Local chat history and attached contents are in RAM; `store: false` does not supersede OpenAI Platform data retention and privacy terms.
+- The GitHub CLI holds GitHub credentials. Builder changes active `gh` account only on explicit action.
+- Mirror push requires approval, verified primary origin, clean checkout and exact local/origin SHA, and forbids `--force`.
+- In production, add proper keychain storage, safety review of filesystem boundaries/symlinks, background Git workers with timeouts, key rotation and tested signed installers.
