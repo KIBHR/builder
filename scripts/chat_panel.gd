@@ -466,7 +466,8 @@ func _sign_out() -> void:
 
 func _on_siwc_session(_state: Dictionary) -> void:
 	if ai_provider == "chatgpt":
-		auth_issue = ""
+		if str(_state.get("status", "")) == "connected":
+			auth_issue = ""
 		_set_account_ui()
 
 
