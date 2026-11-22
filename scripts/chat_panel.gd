@@ -72,6 +72,7 @@ func _build_interface() -> void:
 	_make_note(toolbar, "Проект:")
 	project_select = OptionButton.new()
 	project_select.custom_minimum_size = Vector2(200, 0)
+	project_select.item_selected.connect(_on_project_changed)
 	toolbar.add_child(project_select)
 	var new_chat := Button.new()
 	new_chat.text = "Новый чат"
@@ -186,6 +187,13 @@ func _refresh_projects() -> void:
 		project_select.select(previous)
 	else:
 		project_select.select(0)
+
+
+func _on_project_changed(_index: int) -> void:
+	# Do not replay a previous repository's private files to another project.
+	if not history.is_empty() or not selected_file_name.is_empty():
+		_new_chat()
+		_add_message("Builder", "Проект изменён; предыдущая беседа не будет передаваться новому проекту.", true)
 
 
 func _selected_project() -> Dictionary:
